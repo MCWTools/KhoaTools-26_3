@@ -31,7 +31,7 @@ import net.minecraft.resources.RegistryOps;
 import khoa.tools.KhoaTools;
 import khoa.tools.client.chat.ChatComponentExt;
 import khoa.tools.client.feature.chathighlight.ChatHighlightFeature;
-import khoa.tools.client.util.ServerKey;
+import khoa.api.util.ServerKey;
 
 /**
  * Per-server chat history on disk: .minecraft/khoatools/betterchat/&lt;server&gt;.json

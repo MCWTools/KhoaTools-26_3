@@ -42,6 +42,10 @@ dependencies {
 	// Fabric API. This is technically optional, but you probably want it anyway.
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
+	// KhoaAPILibs (modid khoaapi): a separate mod that players install next to KhoaTools. Compiled against, never bundled.
+	implementation files("libs/KhoaAPILibs-1.0.0.jar")
+	clientImplementation files("libs/KhoaAPILibs-1.0.0.jar")
+
 	// Optional at runtime (see LitematicaBridge); not bundled.
 	clientCompileOnly("fi.dy.masa.litematica:litematica-fabric-26.3:0.29.1") { transitive = false }
 	clientCompileOnly("fi.dy.masa.malilib:malilib-fabric-26.3:0.30.2") { transitive = false }

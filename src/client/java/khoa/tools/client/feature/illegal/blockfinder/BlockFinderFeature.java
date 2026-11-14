@@ -26,7 +26,7 @@ import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.phys.Vec3;
 
-import khoa.tools.client.api.KhoaBlockColor;
+import khoa.api.color.KhoaBlockColor;
 import khoa.tools.client.config.KhoaConfig;
 import khoa.tools.client.config.KhoaKeybinds;
 import khoa.tools.client.feature.KhoaFeature;

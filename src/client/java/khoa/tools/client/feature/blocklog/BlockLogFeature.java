@@ -22,7 +22,7 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
 import khoa.tools.client.feature.KhoaFeature;
-import khoa.tools.client.util.ServerKey;
+import khoa.api.util.ServerKey;
 
 /**
  * Records the blocks players (you and others you can see) break and place into

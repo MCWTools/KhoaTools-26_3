@@ -15,7 +15,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
-import khoa.tools.client.api.KhoaBlockColor;
+import khoa.api.color.KhoaBlockColor;
 import khoa.tools.client.config.KhoaConfig;
 
 /**

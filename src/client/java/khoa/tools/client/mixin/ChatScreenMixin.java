@@ -22,7 +22,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.Style;
 
 import khoa.tools.client.chat.ChatComponentExt;
-import khoa.tools.client.chat.ChatCoordinates;
+import khoa.api.chat.ChatCoordinates;
 import khoa.tools.client.chat.ChatLineFinder;
 import khoa.tools.client.chat.ChatMessageEdit;
 import khoa.tools.client.chat.RawChatText;

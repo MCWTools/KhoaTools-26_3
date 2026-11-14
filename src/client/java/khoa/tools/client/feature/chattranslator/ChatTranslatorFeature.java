@@ -35,7 +35,7 @@ import net.minecraft.network.chat.MutableComponent;
 import net.minecraft.network.chat.Style;
 
 import khoa.tools.client.chat.ChatComponentExt;
-import khoa.tools.client.chat.ChatCoordinates;
+import khoa.api.chat.ChatCoordinates;
 import khoa.tools.client.feature.KhoaFeature;
 import khoa.tools.client.feature.chathighlight.ChatHighlightFeature;
 import khoa.tools.setting.Setting;

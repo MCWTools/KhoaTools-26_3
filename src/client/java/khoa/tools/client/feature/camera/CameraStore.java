@@ -22,7 +22,7 @@ import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.world.phys.Vec3;
 
 import khoa.tools.KhoaTools;
-import khoa.tools.client.util.ServerKey;
+import khoa.api.util.ServerKey;
 
 /** Saved cameras, stored per server + dimension in config/khoatools-cameras.json. */
 public final class CameraStore {

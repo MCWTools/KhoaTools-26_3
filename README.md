@@ -2,6 +2,8 @@
 
 Expandable client-side toolbox for Minecraft 26.3 (Fabric). Modid: `khoatools`.
 
+**Requires [KhoaAPILibs](https://github.com/MCWTools/KhoaAPILibs)** (modid `khoaapi`): install `KhoaAPILibs-<version>.jar` in the mods folder next to KhoaTools.
+
 ## GUI
 
 `/khoatools` (or `/khoatoolsclient` with nothing after it) opens the config GUI.

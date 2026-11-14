@@ -55,7 +55,7 @@ public final class PwNearestFeature implements KhoaFeature {
 
 	/** "123 12 52" pasted into X, Y or Z fills all three; "123 52" sets X and Z only. */
 	private static boolean pasteCoordinates(String text) {
-		int[] v = khoa.tools.client.chat.ChatCoordinates.parse(text);
+		int[] v = khoa.api.chat.ChatCoordinates.parse(text);
 		if (v == null) {
 			return false;
 		}

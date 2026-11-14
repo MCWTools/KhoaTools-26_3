@@ -28,9 +28,13 @@ jobs:
         run: ./gradlew build
       - name: compute version
         id: ver
+        env:
+          HEAD_MSG: ${{ github.event.head_commit.message }}
         run: |
           base=$(grep -E '^version=' gradle.properties | cut -d= -f2 | tr -d '\r ')
           echo "tag=v${base}-build.${GITHUB_RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          first=$(printf '%s' "$HEAD_MSG" | head -n 1)
+          echo "title=KhoaTools v${base}-build.${GITHUB_RUN_NUMBER}: ${first}" >> "$GITHUB_OUTPUT"
       - name: create release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -38,5 +42,5 @@ jobs:
           jar=$(ls build/libs/*.jar | grep -v -- '-sources.jar' | head -n 1)
           gh release create "${{ steps.ver.outputs.tag }}" "$jar" \
             --target "$GITHUB_SHA" \
-            --title "${{ steps.ver.outputs.tag }}" \
+            --title "${{ steps.ver.outputs.title }}" \
             --generate-notes

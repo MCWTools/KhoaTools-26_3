@@ -191,7 +191,7 @@ final class WaypointEditScreen extends Screen {
 
 	/** True when the text was 2 or 3 numbers and went into the X Y Z boxes. */
 	private boolean pasteCoordinates(String text) {
-		int[] v = khoa.tools.client.chat.ChatCoordinates.parse(text);
+		int[] v = khoa.api.chat.ChatCoordinates.parse(text);
 		if (v == null || cornerOne[0] == null) {
 			return false;
 		}

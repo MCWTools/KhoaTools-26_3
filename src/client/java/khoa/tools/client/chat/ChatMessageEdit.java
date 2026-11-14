@@ -5,6 +5,8 @@ import net.minecraft.client.gui.components.ChatComponent;
 import net.minecraft.client.multiplayer.chat.GuiMessage;
 import net.minecraft.network.chat.Component;
 
+import khoa.api.chat.ChatCoordinates;
+
 /**
  * Client-only message edit: the clicked message is greyed out while its raw text sits in the chat box;
  * on send the message is replaced locally (nothing goes to the server), on close it is restored.

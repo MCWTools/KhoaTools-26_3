@@ -20,8 +20,8 @@ import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.Vec3;
 
-import khoa.tools.client.api.KhoaPathfinding;
-import khoa.tools.client.api.pathfinding.PathOptions;
+import khoa.api.path.KhoaPathfinding;
+import khoa.api.path.PathOptions;
 import khoa.tools.client.feature.illegal.spawnerfinder.SpawnerDigPath;
 
 /**

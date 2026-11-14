@@ -43,7 +43,7 @@ import khoa.tools.KhoaTools;
 import khoa.tools.client.config.KhoaConfig;
 import khoa.tools.client.feature.KhoaFeature;
 import khoa.tools.setting.Setting;
-import khoa.tools.client.util.ServerKey;
+import khoa.api.util.ServerKey;
 
 /**
  * /khoatoolsclient downloadchunk [allchunkinrenderdistance] - toggle.

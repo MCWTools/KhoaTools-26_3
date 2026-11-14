@@ -21,7 +21,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MessageSignature;
 
 import khoa.tools.client.chat.ChatComponentExt;
-import khoa.tools.client.chat.ChatCoordinates;
+import khoa.api.chat.ChatCoordinates;
 import khoa.tools.client.feature.betterchat.BetterChatConfig;
 import khoa.tools.client.feature.betterchat.ChatCache;
 import khoa.tools.client.feature.chathighlight.ChatHighlightFeature;

@@ -25,7 +25,7 @@ import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.HitResult;
 
 import khoa.tools.KhoaTools;
-import khoa.tools.client.api.KhoaBlockColor;
+import khoa.api.color.KhoaBlockColor;
 import khoa.tools.client.config.KhoaConfig;
 import khoa.tools.client.config.KhoaKeybinds;
 import khoa.tools.client.feature.KhoaFeature;

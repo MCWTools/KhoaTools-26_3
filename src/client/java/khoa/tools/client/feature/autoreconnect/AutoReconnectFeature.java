@@ -15,7 +15,7 @@ import net.minecraft.client.multiplayer.resolver.ServerAddress;
 
 import khoa.tools.client.config.KhoaConfig;
 import khoa.tools.client.feature.KhoaFeature;
-import khoa.tools.client.util.Ticks;
+import khoa.api.util.Ticks;
 import khoa.tools.setting.Setting;
 
 /** Reconnects to the last multiplayer server after a kick/connection loss (only from the "Disconnected" screen). */

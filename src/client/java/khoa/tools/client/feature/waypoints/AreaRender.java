@@ -12,7 +12,7 @@ import net.minecraft.gizmos.Gizmos;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.Vec3;
 
-import khoa.tools.client.api.KhoaBlockColor;
+import khoa.api.color.KhoaBlockColor;
 
 /**
  * Draws an area waypoint as one shape: translucent fill on the outside faces and only the outer edges of the whole union of its regions

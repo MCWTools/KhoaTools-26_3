@@ -26,7 +26,7 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 
 import khoa.tools.KhoaTools;
-import khoa.tools.client.util.ServerKey;
+import khoa.api.util.ServerKey;
 
 /**
  * Waypoints and groups on disk, per server / world:

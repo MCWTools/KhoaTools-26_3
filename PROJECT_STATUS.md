@@ -1,5 +1,12 @@
 ﻿# KhoaTools (26.3) Project Status
 
+## 2026-11-14: Switched to KhoaAPILibs (1.3.0)
+
+- KhoaTools now REQUIRES the KhoaAPILibs mod (modid `khoaapi` >= 1.0.0, https://github.com/MCWTools/KhoaAPILibs). The jar is compiled against from `libs/KhoaAPILibs-1.0.0.jar` (not bundled); players install `KhoaAPILibs-<version>.jar` next to KhoaTools.
+- Moved to the library (classes deleted here, imports now `khoa.api.*`): `KhoaPathfinding` + `GridPathfinder` / `PathOptions` / `Terrain` -> `khoa.api.path`, `KhoaBlockColor` -> `khoa.api.color`, `ChatCoordinates` -> `khoa.api.chat`, `ServerKey` / `Ticks` -> `khoa.api.util`. Code that called the old `khoa.tools.client.api.*` classes must switch to `khoa.api.path.*` / `khoa.api.color.KhoaBlockColor`.
+- Kept here: `KeyCategory` ("khoatools" Controls category), `OptionUtil`, `FaceRect` (they use KhoaTools' own mixin / category).
+- Verified: `gradlew build` BUILD SUCCESSFUL (jar `khoatools-1.3.0.jar`). NOT verified in game.
+
 ## Project
 
 - Minecraft: 26.3
