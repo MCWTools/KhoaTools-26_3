@@ -1,0 +1,216 @@
+package khoa.tools.client.mixin;
+
+import java.util.List;
+
+import org.spongepowered.asm.mixin.Final;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Shadow;
+import org.spongepowered.asm.mixin.Unique;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Constant;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.ModifyConstant;
+import org.spongepowered.asm.mixin.injection.ModifyVariable;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+import net.minecraft.client.gui.components.ChatComponent;
+import net.minecraft.client.multiplayer.chat.GuiMessage;
+import net.minecraft.client.multiplayer.chat.GuiMessageSource;
+import net.minecraft.client.multiplayer.chat.GuiMessageTag;
+import net.minecraft.network.chat.Component;
+import net.minecraft.network.chat.MessageSignature;
+
+import khoa.tools.client.chat.ChatComponentExt;
+import khoa.tools.client.chat.ChatCoordinates;
+import khoa.tools.client.feature.betterchat.BetterChatConfig;
+import khoa.tools.client.feature.betterchat.ChatCache;
+import khoa.tools.client.feature.chathighlight.ChatHighlightFeature;
+import khoa.tools.client.feature.chattranslator.ChatTranslatorFeature;
+
+@Mixin(ChatComponent.class)
+public abstract class ChatComponentMixin implements ChatComponentExt {
+	@Shadow
+	@Final
+	private List<GuiMessage> allMessages;
+
+	@Shadow
+	@Final
+	private List<GuiMessage.Line> trimmedMessages;
+
+	@Shadow
+	protected abstract void addMessageToDisplayQueue(GuiMessage message);
+
+	@Shadow
+	protected abstract void addMessageToQueue(GuiMessage message);
+
+	@Shadow
+	protected abstract void refreshTrimmedMessages();
+
+	@Shadow
+	public abstract void resetChatScroll();
+
+	@Shadow
+	public abstract void scrollChat(int amount);
+
+	@Shadow
+	public abstract int getLinesPerPage();
+
+	// Vanilla keeps 100 messages / 100 wrapped lines. With a custom length we do the trimming ourselves.
+	@ModifyConstant(method = "addMessageToQueue", constant = @Constant(intValue = 100))
+	private int khoatools$messageLimit(int vanilla) {
+		return BetterChatConfig.limit() != BetterChatConfig.VANILLA_LENGTH ? Integer.MAX_VALUE : vanilla;
+	}
+
+	@ModifyConstant(method = "addMessageToDisplayQueue", constant = @Constant(intValue = 100))
+	private int khoatools$lineLimit(int vanilla) {
+		return BetterChatConfig.limit() != BetterChatConfig.VANILLA_LENGTH ? Integer.MAX_VALUE : vanilla;
+	}
+
+	@Inject(method = "addMessageToQueue", at = @At("TAIL"))
+	private void khoatools$trimAfterAdd(GuiMessage message, CallbackInfo ci) {
+		khoatools$trimToLength();
+	}
+
+	// Remember messages that came from the server (player chat + server system messages), never client ones.
+	@Inject(method = "addMessage", at = @At("HEAD"))
+	private void khoatools$record(Component content, MessageSignature signature, GuiMessageSource source,
+		GuiMessageTag tag, CallbackInfo ci) {
+		if (source != GuiMessageSource.SYSTEM_CLIENT) {
+			ChatCache.record(content);
+			ChatHighlightFeature.onServerMessage(content);
+		} else if (BetterChatConfig.cacheClientMessages()) {
+			ChatCache.record(content); // optional: messages made by this mod / client commands are kept too
+		}
+	}
+
+	@Unique
+	private GuiMessage khoatools$firstBefore;
+
+	@Unique
+	private int khoatools$sizeBefore;
+
+	@Inject(method = "addMessage", at = @At("HEAD"))
+	private void khoatools$rememberState(Component content, MessageSignature signature, GuiMessageSource source,
+		GuiMessageTag tag, CallbackInfo ci) {
+		this.khoatools$firstBefore = this.allMessages.isEmpty() ? null : this.allMessages.getFirst();
+		this.khoatools$sizeBefore = this.allMessages.size();
+	}
+
+	// Chat Translator: the message was added as received; now hand it over so it can be replaced by the translation.
+	@Inject(method = "addMessage", at = @At("TAIL"))
+	private void khoatools$translate(Component content, MessageSignature signature, GuiMessageSource source,
+		GuiMessageTag tag, CallbackInfo ci) {
+		if (this.allMessages.isEmpty()) {
+			return;
+		}
+		GuiMessage added = this.allMessages.getFirst();
+		if (added == this.khoatools$firstBefore && this.allMessages.size() == this.khoatools$sizeBefore) {
+			return; // nothing was added (message dropped)
+		}
+		ChatTranslatorFeature.onMessage((ChatComponent) (Object) this, added, content, signature, source, tag);
+	}
+
+	@ModifyVariable(method = "addMessage", at = @At("HEAD"), argsOnly = true, ordinal = 0)
+	private Component khoatools$makeCoordinatesClickable(Component content) {
+		return ChatTranslatorFeature.markTranslatable(ChatHighlightFeature.apply(ChatCoordinates.makeClickable(content)));
+	}
+
+	@Override
+	public void khoatools$trimToLength() {
+		int max = BetterChatConfig.limit();
+		if (max == BetterChatConfig.VANILLA_LENGTH) {
+			return;
+		}
+		while (this.allMessages.size() > max) {
+			GuiMessage removed = this.allMessages.removeLast();
+			// lines are stored newest first, so the removed message owns the tail of the list
+			while (!this.trimmedMessages.isEmpty() && this.trimmedMessages.getLast().parent() == removed) {
+				this.trimmedMessages.removeLast();
+			}
+		}
+	}
+
+	@Override
+	public void khoatools$replace(GuiMessage old, GuiMessage replacement) {
+		int index = -1;
+		for (int i = 0; i < this.allMessages.size(); i++) {
+			if (this.allMessages.get(i) == old) {
+				index = i;
+				break;
+			}
+		}
+		if (index < 0) {
+			return; // already trimmed away
+		}
+		this.allMessages.set(index, replacement);
+		// same as vanilla's own rebuild: oldest first, newest lines end up first in trimmedMessages
+		this.trimmedMessages.clear();
+		for (int i = this.allMessages.size() - 1; i >= 0; i--) {
+			this.addMessageToDisplayQueue(this.allMessages.get(i));
+		}
+	}
+
+	@Override
+	public List<GuiMessage> khoatools$messages() {
+		return this.allMessages;
+	}
+
+	@Override
+	public void khoatools$refresh() {
+		this.refreshTrimmedMessages();
+	}
+
+	@Override
+	public boolean khoatools$scrollTo(GuiMessage message) {
+		int first = -1;
+		int last = -1;
+		for (int i = 0; i < this.trimmedMessages.size(); i++) {
+			if (this.trimmedMessages.get(i).parent() == message) {
+				if (first < 0) {
+					first = i;
+				}
+				last = i;
+			}
+		}
+		if (first < 0) {
+			return false;
+		}
+		this.resetChatScroll();
+		// line 0 is the newest (bottom); put the middle line of the message in the middle of the page
+		this.scrollChat(Math.max(0, (first + last) / 2 - this.getLinesPerPage() / 2));
+		return true;
+	}
+
+	@Unique
+	private static String khoatools$text(net.minecraft.util.FormattedCharSequence line) {
+		StringBuilder sb = new StringBuilder();
+		line.accept((index, style, codePoint) -> {
+			sb.appendCodePoint(codePoint);
+			return true;
+		});
+		return sb.toString();
+	}
+
+	@Override
+	public GuiMessage khoatools$messageOfLine(net.minecraft.util.FormattedCharSequence line) {
+		for (GuiMessage.Line candidate : this.trimmedMessages) {
+			if (candidate.content() == line) {
+				return candidate.parent();
+			}
+		}
+		// The chat may hand over a wrapped copy of the line: fall back to comparing the text (newest line first).
+		String wanted = khoatools$text(line);
+		for (GuiMessage.Line candidate : this.trimmedMessages) {
+			if (khoatools$text(candidate.content()).equals(wanted)) {
+				return candidate.parent();
+			}
+		}
+		return null;
+	}
+
+	@Override
+	public void khoatools$addRestored(GuiMessage message) {
+		this.addMessageToDisplayQueue(message);
+		this.addMessageToQueue(message);
+	}
+}
