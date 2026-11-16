@@ -91,6 +91,8 @@ public class KhoaToolsClient implements ClientModInitializer {
 			}
 		});
 
+		khoa.tools.client.feature.invrefill.SavedInventoryRefill.init();
+
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> {
 			// /khoatoolsclient = same GUI, plus one subcommand per feature (the old way, still works).
 			LiteralArgumentBuilder<FabricClientCommandSource> root = ClientCommands.literal("khoatoolsclient")
@@ -118,6 +120,9 @@ public class KhoaToolsClient implements ClientModInitializer {
 
 			// /tick toggle (client side): freezes or unfreezes depending on the current state. Other /tick subcommands go to the server.
 			khoa.tools.client.feature.TickToggleCommand.register(dispatcher);
+
+			// /autorefill <name>: optional integration with Save and Load Inventories (prints an install hint when it is missing).
+			khoa.tools.client.feature.invrefill.SavedInventoryRefill.register(dispatcher);
 		});
 	}
 
