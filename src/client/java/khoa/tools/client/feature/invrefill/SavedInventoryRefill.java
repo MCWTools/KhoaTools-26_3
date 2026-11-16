@@ -6,9 +6,11 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import com.mojang.brigadier.CommandDispatcher;
@@ -26,28 +28,29 @@ import net.minecraft.commands.SharedSuggestionProvider;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.NbtOps;
+import net.minecraft.nbt.Tag;
 import net.minecraft.nbt.TagParser;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.Identifier;
 import net.minecraft.resources.RegistryOps;
-import net.minecraft.world.inventory.ContainerInput;
 import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 
 import khoa.tools.KhoaTools;
 
 /**
- * {@code /autorefill <inventory name>}: keeps your inventory arranged like an inventory saved with the optional mod
+ * {@code /autorefill <inventory name>}: restores the STACK SIZES of an inventory saved with the optional mod
  * "Save and Load Inventories" by Serilum (modid {@value #MOD_ID}, {@code /saveinventory <name>}).
  *
  * The other mod is NOT a compile or run-time dependency: it is only detected with {@link FabricLoader#isModLoaded} and its
  * saved {@code .txt} files are read here. Without it, the command only prints how to install it.
  *
- * Each time the number of one of the layout's items changes (picked up, used, dropped...), the items you already carry are
- * swapped into the slots of the saved layout. Nothing is ever created: items that are not in your inventory are skipped, and
- * a slot is only changed when an item of the wanted type exists in another, not-yet-correct slot. The layout is always the
- * saved one, so after you sort the inventory by hand the next change puts everything back in the saved order.
- * Armor slots are not touched. Only the survival-style inventory menu is used (no creative mode, no open container or screen).
+ * Only a change in the number of a layout item triggers it. Then, for every saved slot whose item you carry (or carried since
+ * the command started), the count is topped up to the saved count with the vanilla command {@code /item replace entity @s <slot>
+ * with <item>[<saved components>] <count>}. NBT/components are the saved ones (a stack is only touched when its components are
+ * identical to the saved ones), and a slot that now holds something else is never replaced. If you sorted the inventory, a stack
+ * is topped up where it is now; an item that ran out completely comes back into its saved slot if that slot is empty.
+ * Armor is not handled. Needs permission to run /item (operator / cheats), because the client cannot create items itself.
  */
 public final class SavedInventoryRefill {
 	static final String MOD_ID = "saveandloadinventories";
@@ -57,14 +60,24 @@ public final class SavedInventoryRefill {
 	/** Logical slots: 0..8 hotbar, 9..35 main inventory, 36 offhand. */
 	private static final int SLOT_COUNT = 37;
 	private static final int OFFHAND = 36;
-	/** Swaps per tick; the rest continues on the next tick. */
-	private static final int MAX_SWAPS_PER_TICK = 6;
+	private static final int MAX_COMMANDS_PER_TICK = 4;
+	/** Ticks to wait for the server to apply a command before sending it again. */
+	private static final int RETRY_TICKS = 20;
+	private static final int MAX_ATTEMPTS = 3;
+
+	/** What the saved file says about one slot: the stack (for matching, count = saved count) and its /item argument. */
+	private record Want(ItemStack stack, String spec) {
+	}
 
 	private static String activeName;
-	/** Wanted stack per logical slot (null = the layout does not care about that slot). */
-	private static ItemStack[] layout;
+	private static Want[] layout;
 	private static Map<Item, Integer> lastTotals;
+	/** Layout items that were in the inventory at some point since the command started. */
+	private static final Set<Item> seen = new HashSet<>();
 	private static boolean pending;
+	private static long tickCounter;
+	private static final long[] sentAt = new long[SLOT_COUNT];
+	private static final int[] attempts = new int[SLOT_COUNT];
 
 	private SavedInventoryRefill() {
 	}
@@ -116,7 +129,7 @@ public final class SavedInventoryRefill {
 			source.sendError(Component.literal("Auto Refill: no saved inventory named '" + name + "'. Saved: " + SavedInventoryFiles.names()));
 			return 0;
 		}
-		ItemStack[] parsed;
+		Want[] parsed;
 		try {
 			parsed = parse(mc, Files.readString(file, StandardCharsets.UTF_8));
 		} catch (IOException e) {
@@ -125,8 +138,8 @@ public final class SavedInventoryRefill {
 			return 0;
 		}
 		int wanted = 0;
-		for (ItemStack s : parsed) {
-			if (s != null) {
+		for (Want w : parsed) {
+			if (w != null) {
 				wanted++;
 			}
 		}
@@ -134,11 +147,11 @@ public final class SavedInventoryRefill {
 			source.sendError(Component.literal("Auto Refill: '" + name + "' has no readable item in the 36 inventory slots or the offhand."));
 			return 0;
 		}
+		reset();
 		layout = parsed;
 		activeName = name;
-		lastTotals = null;
 		pending = true;
-		source.sendFeedback(Component.literal("Auto Refill on: '" + name + "' (" + wanted + " slots). Items you carry are put back into that layout whenever their count changes. /autorefill off to stop."));
+		source.sendFeedback(Component.literal("Auto Refill on: '" + name + "' (" + wanted + " slots). When the count of a saved item changes, its stack size is restored. /autorefill off to stop."));
 		return 1;
 	}
 
@@ -147,6 +160,9 @@ public final class SavedInventoryRefill {
 		layout = null;
 		lastTotals = null;
 		pending = false;
+		seen.clear();
+		java.util.Arrays.fill(sentAt, 0);
+		java.util.Arrays.fill(attempts, 0);
 	}
 
 	// ---- parsing the saved file ----
@@ -155,9 +171,9 @@ public final class SavedInventoryRefill {
 	 * Reads the gear text of Save and Load Inventories (one line per slot: {@code 'head' : '<snbt>',} or {@code 12 : '<snbt>',}).
 	 * Returns the wanted stack for logical slots 0..35 and the offhand; unreadable or empty lines are null.
 	 */
-	private static ItemStack[] parse(Minecraft mc, String text) {
-		ItemStack[] out = new ItemStack[SLOT_COUNT];
-		RegistryOps<net.minecraft.nbt.Tag> ops = RegistryOps.create(NbtOps.INSTANCE, mc.level.registryAccess());
+	private static Want[] parse(Minecraft mc, String text) {
+		Want[] out = new Want[SLOT_COUNT];
+		RegistryOps<Tag> ops = RegistryOps.create(NbtOps.INSTANCE, mc.level.registryAccess());
 		for (String line : text.split("',[\\r\\n]+")) {
 			String trimmed = line.trim();
 			int sep = trimmed.indexOf(" : ");
@@ -191,15 +207,12 @@ public final class SavedInventoryRefill {
 			if (data.isBlank()) {
 				continue;
 			}
-			ItemStack stack = readStack(ops, data);
-			if (stack != null) {
-				out[slot] = stack;
-			}
+			out[slot] = readWant(ops, data);
 		}
 		return out;
 	}
 
-	private static ItemStack readStack(RegistryOps<net.minecraft.nbt.Tag> ops, String snbt) {
+	private static Want readWant(RegistryOps<Tag> ops, String snbt) {
 		CompoundTag tag;
 		try {
 			tag = TagParser.parseCompoundFully(snbt);
@@ -207,17 +220,36 @@ public final class SavedInventoryRefill {
 			KhoaTools.LOGGER.warn("Auto Refill: unreadable item data: {}", e.getMessage());
 			return null;
 		}
-		ItemStack stack = ItemStack.CODEC.parse(ops, tag).result().orElse(ItemStack.EMPTY);
-		if (!stack.isEmpty()) {
-			return stack;
-		}
-		// Components the current version can't decode: fall back to the plain item.
-		Identifier id = Identifier.tryParse(tag.getStringOr("id", ""));
+		String idText = tag.getStringOr("id", "");
+		Identifier id = Identifier.tryParse(idText);
 		if (id == null) {
 			return null;
 		}
-		Item item = BuiltInRegistries.ITEM.getOptional(id).orElse(null);
-		return item == null ? null : new ItemStack(item);
+		ItemStack stack = ItemStack.CODEC.parse(ops, tag).result().orElse(ItemStack.EMPTY);
+		if (stack.isEmpty()) {
+			// Components the current version can't decode: match and give the plain item.
+			Item item = BuiltInRegistries.ITEM.getOptional(id).orElse(null);
+			if (item == null) {
+				return null;
+			}
+			stack = new ItemStack(item, Math.max(1, tag.getIntOr("count", 1)));
+			return new Want(stack, id + "");
+		}
+		StringBuilder spec = new StringBuilder(id.toString());
+		CompoundTag components = tag.getCompound("components").orElse(null);
+		if (components != null && !components.keySet().isEmpty()) {
+			spec.append('[');
+			boolean first = true;
+			for (String k : components.keySet()) {
+				if (!first) {
+					spec.append(',');
+				}
+				first = false;
+				spec.append(k).append('=').append(components.get(k));
+			}
+			spec.append(']');
+		}
+		return new Want(stack, spec.toString());
 	}
 
 	// ---- per tick ----
@@ -226,31 +258,37 @@ public final class SavedInventoryRefill {
 		if (activeName == null) {
 			return;
 		}
+		tickCounter++;
 		LocalPlayer player = mc.player;
-		if (player == null || mc.level == null) {
-			lastTotals = null; // after a reconnect the layout is applied once again
+		if (player == null || mc.level == null || mc.getConnection() == null) {
+			lastTotals = null; // after a reconnect everything is checked once again
 			pending = true;
 			return;
 		}
-		if (mc.gui.screen() != null || mc.gameMode == null || player.containerMenu != player.inventoryMenu
-			|| player.hasInfiniteMaterials() || !player.inventoryMenu.getCarried().isEmpty() || player.isSpectator()) {
-			return; // keep `pending`; the totals are compared again once this is over
+		if (mc.gui.screen() != null || player.containerMenu != player.inventoryMenu || player.isSpectator()) {
+			return; // keep `pending`; checked again once this is over
 		}
 		Map<Item, Integer> totals = totals(player);
+		for (Map.Entry<Item, Integer> e : totals.entrySet()) {
+			if (e.getValue() > 0) {
+				seen.add(e.getKey());
+			}
+		}
 		if (lastTotals == null || !totals.equals(lastTotals)) {
 			lastTotals = totals;
 			pending = true;
 		}
-		if (pending && arrange(mc, player) == 0) {
+		if (pending && refill(mc, player) == 0) {
 			pending = false;
 		}
 	}
 
+	/** Total count of every layout item in the 36 slots + offhand (0 for items that are not carried). */
 	private static Map<Item, Integer> totals(LocalPlayer player) {
 		Map<Item, Integer> totals = new HashMap<>();
-		for (ItemStack wanted : layout) {
-			if (wanted != null) {
-				totals.putIfAbsent(wanted.getItem(), 0);
+		for (Want w : layout) {
+			if (w != null) {
+				totals.putIfAbsent(w.stack().getItem(), 0);
 			}
 		}
 		for (int slot = 0; slot < SLOT_COUNT; slot++) {
@@ -262,84 +300,76 @@ public final class SavedInventoryRefill {
 		return totals;
 	}
 
-	/** Does the stack in logical {@code slot} already satisfy the layout? (Layout without an entry = nothing to satisfy.) */
-	private static boolean satisfied(LocalPlayer player, int slot) {
-		ItemStack wanted = layout[slot];
-		return wanted == null || stackAt(player, slot).is(wanted.getItem());
-	}
-
-	/** Performs up to {@link #MAX_SWAPS_PER_TICK} swaps toward the layout; returns how many it did (0 = nothing left to do). */
-	private static int arrange(Minecraft mc, LocalPlayer player) {
-		int swaps = 0;
-		for (int target = 0; target < SLOT_COUNT && swaps < MAX_SWAPS_PER_TICK; target++) {
-			ItemStack wanted = layout[target];
-			if (wanted == null || satisfied(player, target)) {
-				continue;
-			}
-			int source = findSource(player, target, wanted);
-			if (source < 0) {
-				continue; // none of that item in the inventory: skipped on purpose
-			}
-			swap(mc, player, source, target);
-			swaps++;
-		}
-		return swaps;
-	}
-
-	/** A slot other than {@code target} holding the wanted item that is not itself correctly placed; exact component match first. */
-	private static int findSource(LocalPlayer player, int target, ItemStack wanted) {
-		int sameItem = -1;
+	/** Sends the /item commands that restore stack sizes; returns how many fixes are still sent or waiting (0 = all done). */
+	private static int refill(Minecraft mc, LocalPlayer player) {
+		boolean[] claimed = new boolean[SLOT_COUNT];
 		for (int slot = 0; slot < SLOT_COUNT; slot++) {
-			if (slot == target) {
-				continue;
-			}
-			ItemStack have = stackAt(player, slot);
-			if (have.isEmpty() || !have.is(wanted.getItem())) {
-				continue;
-			}
-			if (layout[slot] != null && have.is(layout[slot].getItem())) {
-				continue; // already where the layout wants it
-			}
-			if (ItemStack.isSameItemSameComponents(have, wanted)) {
-				return slot;
-			}
-			if (sameItem < 0) {
-				sameItem = slot;
+			if (layout[slot] != null && sameStack(stackAt(player, slot), layout[slot])) {
+				claimed[slot] = true;
 			}
 		}
-		return sameItem;
+		int busy = 0;
+		int sent = 0;
+		for (int slot = 0; slot < SLOT_COUNT; slot++) {
+			Want want = layout[slot];
+			if (want == null) {
+				continue;
+			}
+			int target = -1;
+			int holder = slot;
+			if (!claimed[slot]) {
+				holder = -1;
+				for (int other = 0; other < SLOT_COUNT; other++) {
+					if (!claimed[other] && sameStack(stackAt(player, other), want)) {
+						holder = other;
+						claimed[other] = true;
+						break;
+					}
+				}
+			}
+			if (holder >= 0) {
+				if (stackAt(player, holder).getCount() < want.stack().getCount()) {
+					target = holder;
+				}
+			} else if (seen.contains(want.stack().getItem()) && stackAt(player, slot).isEmpty()) {
+				target = slot; // ran out completely: back into its saved slot (never over another item)
+			}
+			if (target < 0) {
+				attempts[slot] = 0;
+				continue;
+			}
+			busy++;
+			if (tickCounter - sentAt[target] < RETRY_TICKS || sent >= MAX_COMMANDS_PER_TICK) {
+				continue;
+			}
+			if (attempts[target] >= MAX_ATTEMPTS) {
+				player.sendSystemMessage(Component.literal("Auto Refill stopped: the server did not apply /item replace (operator permission needed)."));
+				reset();
+				return 0;
+			}
+			attempts[target]++;
+			sentAt[target] = tickCounter;
+			sent++;
+			mc.getConnection().sendCommand("item replace entity @s " + slotName(target) + " with " + want.spec() + " " + want.stack().getCount());
+		}
+		return busy;
+	}
+
+	/** Same item and same components as the saved stack (the count is ignored). */
+	private static boolean sameStack(ItemStack have, Want want) {
+		return !have.isEmpty() && ItemStack.isSameItemSameComponents(have, want.stack());
 	}
 
 	private static ItemStack stackAt(LocalPlayer player, int logical) {
 		return logical == OFFHAND ? player.getOffhandItem() : player.getInventory().getItem(logical);
 	}
 
-	/** Menu slot of the player's inventory menu: 36..44 hotbar, 9..35 main, 45 offhand. */
-	private static int menuSlot(int logical) {
+	/** Slot argument of /item: hotbar.0-8, inventory.0-26, weapon.offhand. */
+	private static String slotName(int logical) {
 		if (logical == OFFHAND) {
-			return 45;
+			return "weapon.offhand";
 		}
-		return logical < 9 ? 36 + logical : logical;
-	}
-
-	/** Swaps the stacks of two logical slots using only SWAP clicks (hotbar number 0..8, or 40 = offhand). */
-	private static void swap(Minecraft mc, LocalPlayer player, int a, int b) {
-		if (a == OFFHAND || b == OFFHAND) {
-			click(mc, player, menuSlot(a == OFFHAND ? b : a), 40);
-		} else if (a < 9) {
-			click(mc, player, menuSlot(b), a);
-		} else if (b < 9) {
-			click(mc, player, menuSlot(a), b);
-		} else {
-			// main <-> main: go through hotbar slot 0 and put its own stack back.
-			click(mc, player, menuSlot(a), 0);
-			click(mc, player, menuSlot(b), 0);
-			click(mc, player, menuSlot(a), 0);
-		}
-	}
-
-	private static void click(Minecraft mc, LocalPlayer player, int menuSlot, int button) {
-		mc.gameMode.handleContainerInput(player.inventoryMenu.containerId, menuSlot, button, ContainerInput.SWAP, player);
+		return logical < 9 ? "hotbar." + logical : "inventory." + (logical - 9);
 	}
 
 	/** Names of the saved inventories (for tab completion). */
