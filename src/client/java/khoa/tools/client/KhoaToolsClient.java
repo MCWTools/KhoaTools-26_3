@@ -115,6 +115,9 @@ public class KhoaToolsClient implements ClientModInitializer {
 
 			// Extra command names set in each feature's config screen (Command row) -> same command, same arguments.
 			KhoaCommandBinds.registerAll(dispatcher);
+
+			// /tick toggle (client side): freezes or unfreezes depending on the current state. Other /tick subcommands go to the server.
+			khoa.tools.client.feature.TickToggleCommand.register(dispatcher);
 		});
 	}
 
