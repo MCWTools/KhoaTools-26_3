@@ -118,9 +118,6 @@ public class KhoaToolsClient implements ClientModInitializer {
 			// Extra command names set in each feature's config screen (Command row) -> same command, same arguments.
 			KhoaCommandBinds.registerAll(dispatcher);
 
-			// /tick toggle (client side): freezes or unfreezes depending on the current state. Other /tick subcommands go to the server.
-			khoa.tools.client.feature.TickToggleCommand.register(dispatcher);
-
 			// /autorefill <name>: optional integration with Save and Load Inventories (prints an install hint when it is missing).
 			khoa.tools.client.feature.invrefill.SavedInventoryRefill.register(dispatcher);
 		});
