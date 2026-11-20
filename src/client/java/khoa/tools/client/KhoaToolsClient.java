@@ -92,6 +92,7 @@ public class KhoaToolsClient implements ClientModInitializer {
 		});
 
 		khoa.tools.client.feature.invrefill.SavedInventoryRefill.init();
+		khoa.tools.client.feature.bettersummon.BetterSummonCommand.init();
 
 		ClientCommandRegistrationCallback.EVENT.register((dispatcher, context) -> {
 			// /khoatoolsclient = same GUI, plus one subcommand per feature (the old way, still works).

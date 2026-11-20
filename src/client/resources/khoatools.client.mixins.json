@@ -19,6 +19,7 @@
 		"LightmapRenderStateExtractorMixin",
 		"MusicManagerMixin",
 		"EntityRenderDispatcherMixin",
+		"LivingEntityRendererMixin",
 		"BlockEntityRenderDispatcherMixin",
 		"BlockMixin",
 		"ModelBlockRendererMixin",

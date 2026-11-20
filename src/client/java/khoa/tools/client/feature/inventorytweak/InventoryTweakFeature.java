@@ -30,6 +30,7 @@ public final class InventoryTweakFeature implements KhoaFeature {
 	private static final String ID = "inventorytweak";
 	private static boolean deleteOnClick;
 	private static boolean unboxOnSpace;
+	private static boolean moreHotbars;
 
 	@Override
 	public String id() {
@@ -61,11 +62,22 @@ public final class InventoryTweakFeature implements KhoaFeature {
 					unboxOnSpace = value;
 					KhoaConfig.put(ID, "unbox", value);
 					KhoaConfig.save();
+				}),
+			Setting.bool("morehotbars", "Unlimited saved hotbars (creative)", "Adds a 'More hotbars' button to the Saved Hotbars tab of the creative inventory: unlimited extra hotbars, 5 per page, Save / Load per hotbar. Stored in config/khoatools-hotbars.json; vanilla hotbar.nbt is never touched.",
+				() -> moreHotbars, value -> {
+					moreHotbars = value;
+					KhoaConfig.put(ID, "morehotbars", value);
+					KhoaConfig.save();
 				}));
+	}
+
+	public static boolean moreHotbars() {
+		return moreHotbars;
 	}
 
 	@Override
 	public void onInit() {
+		moreHotbars = KhoaConfig.getBool(ID, "morehotbars", false);
 		deleteOnClick = KhoaConfig.getBool(ID, "delete", false);
 		unboxOnSpace = KhoaConfig.getBool(ID, "unbox", false);
 	}

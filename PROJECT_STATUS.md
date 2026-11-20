@@ -147,3 +147,17 @@
 ## Ghost Item (2026-11-09)
 
 - New card `feature/ghostitem/GhostItemFeature.java` (registered in KhoaFeatures): copies the offhand item into the empty selected hotbar slot client-side; removed on slot change / offhand change / container screen. Build OK (`gradlew.bat build --offline`); NOT tested in-game.
+
+## Unlimited saved hotbars (Inventory Tweak option "Unlimited saved hotbars (creative)", off by default)
+- Saved Hotbars tab of the creative inventory: the 9 vanilla rows, then extra rows (hotbar 10 and up), 5 more loaded each time you scroll to the bottom. Extra hotbars live in `config/khoatools-hotbars.json`; vanilla `hotbar.nbt` is only touched through the game's own HotbarManager when you save to numbers 1-9.
+- "Save / Load" button in the tab opens a small vanilla-style box: number box (1+), Save, Load. 1-9 = vanilla slots, 10+ = extra. Load is creative only.
+- Files: `feature/inventorytweak/{HotbarRows,SavedHotbarStore,SaveLoadHotbarScreen}.java`, mixin `CreativeModeInventoryScreenMixin`.
+- Verified in the dev client (screenshots of the tab with a saved extra row, scrolling, the box). Not tested: real clicks on Save/Load, other mods' tabs, multiplayer.
+
+## 2026-11-18 /bettersummon
+- feature/bettersummon/BetterSummonCommand: `/bettersummon <1-10000> <summon args>`; client command with requires(hasSingleplayerServer) so it is hidden/refused on servers; runs on the integrated server with the player's command source (cheats rules apply), parses once. Built OK, NOT yet tested in game.
+
+## 2026-11-18 Far mob LOD + far mob AI
+- Client card "Far Mob LOD" (feature/farlod): far/small looking mobs skip all render layers (LivingEntityRendererMixin.shouldRenderLayers). Slider scale 50-200 %, threshold = 32 blocks * scale * size/1.8.
+- Server `/khoatools farmobai [distance] [interval]` (command/FarMobAiFeature + MobAiMixin on Mob.serverAiStep). Khoa found render count is the bottleneck, so client LOD is the focus.
+- Built OK; mixins NOT yet verified in game (dev client run was killed for low memory). Planned: tier 2 (no shadow/nametag/outer model layer), animation throttle, measurement counter.

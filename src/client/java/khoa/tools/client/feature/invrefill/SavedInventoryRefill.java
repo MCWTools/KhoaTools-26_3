@@ -20,6 +20,7 @@ import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayConnectionEvents;
 import net.fabricmc.loader.api.FabricLoader;
 
 import net.minecraft.client.Minecraft;
@@ -88,6 +89,8 @@ public final class SavedInventoryRefill {
 
 	public static void init() {
 		ClientTickEvents.END_CLIENT_TICK.register(SavedInventoryRefill::tick);
+		// never carry an active refill into another world/server: it would spam /item replace and get the player kicked
+		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> reset());
 	}
 
 	public static void register(CommandDispatcher<FabricClientCommandSource> dispatcher) {

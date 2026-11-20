@@ -52,6 +52,7 @@ import khoa.tools.client.feature.waypoints.WaypointsFeature;
 public final class KhoaFeatures {
 	private static final List<KhoaFeature> ALL = new ArrayList<>(List.of(
 		new OpenGuiFeature(),
+		new khoa.tools.client.feature.farlod.FarLodFeature(),
 		new DownloadChunkFeature(),
 		new LoadDownloadedChunkFeature(),
 		new IpFinderFeature(),
