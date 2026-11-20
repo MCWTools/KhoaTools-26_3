@@ -32,6 +32,10 @@
 			"environment": "client"
 		},
 		{
+			"config": "khoatools.sodium.mixins.json",
+			"environment": "client"
+		},
+		{
 			"config": "khoatools.skychanger.mixins.json",
 			"environment": "client"
 		}

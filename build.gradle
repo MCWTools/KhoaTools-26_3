@@ -47,6 +47,8 @@ dependencies {
 	clientImplementation files("libs/KhoaAPILibs-1.0.0.jar")
 
 	// Optional at runtime (see LitematicaBridge); not bundled.
+	// Sodium 0.9.3-beta.5: compile-only (optional at runtime), used by the Lazy Chunk Visual mixins in mixin/sodium. Not bundled.
+	clientCompileOnly files("libs/sodium-compile-0.9.3-beta.5.jar")
 	clientCompileOnly("fi.dy.masa.litematica:litematica-fabric-26.3:0.29.1") { transitive = false }
 	clientCompileOnly("fi.dy.masa.malilib:malilib-fabric-26.3:0.30.2") { transitive = false }
 }

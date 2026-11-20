@@ -69,8 +69,12 @@ public final class RemoteSwitch {
 
 	/** Reach for linking (blocks) - a little more than vanilla reach to forgive lag. */
 	private static final double LINK_REACH = 10.0;
-	/** Remote v2: how far (blocks) the block may be from the line the server thinks you are aiming along. */
-	private static final double V2_AIM_TOLERANCE = 6.0;
+	/** Remote v2: extra blocks (on top of the circle radius) the server forgives between the line it thinks you aim along and the block. */
+	private static final double V2_AIM_SLACK = 4.0;
+	/** Remote v2 circle: radius up close, and from this many chunks away it grows by V2_GROWTH_PER_CHUNK per chunk. */
+	public static final double V2_BASE_RADIUS = 1.5;
+	public static final double V2_GROW_FROM_CHUNKS = 5.0;
+	public static final double V2_GROWTH_PER_CHUNK = 0.5;
 
 	private static final int ON_COLOR = 0x55FF55;
 	private static final int OFF_COLOR = 0xFF5555;
@@ -309,6 +313,11 @@ public final class RemoteSwitch {
 		return Math.max(dx, dz) <= view && chunkLoaded(level, pos);
 	}
 
+	/** Remote v2 circle radius at this distance (blocks): 1.5, +0.5 for every chunk beyond 5 chunks, so far switches stay easy to hit. */
+	public static double v2Radius(double distanceBlocks) {
+		return V2_BASE_RADIUS + V2_GROWTH_PER_CHUNK * Math.max(0.0, distanceBlocks / 16.0 - V2_GROW_FROM_CHUNKS);
+	}
+
 	// ---------------------------------------------------------------- using
 
 	/**
@@ -382,7 +391,7 @@ public final class RemoteSwitch {
 		Vec3 look = player.getLookAngle();
 		Vec3 toBlock = Vec3.atCenterOf(pos).subtract(eye);
 		double along = toBlock.dot(look);
-		if (along < 0 || toBlock.subtract(look.scale(along)).length() > V2_AIM_TOLERANCE) {
+		if (along < 0 || toBlock.subtract(look.scale(along)).length() > v2Radius(toBlock.length()) + V2_AIM_SLACK) {
 			return false;
 		}
 		toggleBlock(level, pos, state);

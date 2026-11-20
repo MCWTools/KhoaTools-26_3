@@ -35,15 +35,13 @@ import khoa.tools.setting.Setting;
  * <ul>
  * <li>Remote Switch (carrot on a stick): a right click with it never sends the vanilla "use" packets - the lever / button / plate you click is NOT
  *     interacted with. A {@link RemoteUsePayload} goes instead: it links the remote (first click on a switch) or toggles the linked block (any later click, anywhere).</li>
- * <li>Remote v2 (warped fungus on a stick): aim near a lever / button / pressure plate and a blue circle (radius 1.5 blocks, always visible) is drawn on it.
+ * <li>Remote v2 (warped fungus on a stick): aim near a lever / button / pressure plate and a blue circle (radius 1.5 blocks, +0.5 per chunk beyond 5 chunks away, always visible) is drawn on it.
  *     Aim into the circle and it turns red: a right click then toggles that block. With several switches close together the one your aim is nearest to wins.</li>
  * </ul>
  * Needs the server to have KhoaTools too; without it the remotes behave like normal items.
  */
 public final class RemoteSwitchClientFeature implements KhoaFeature {
 	private static final String ID = "remoteswitch";
-	/** Radius of the circle = how far from the middle of the switch your aim may be and still count as a hit. */
-	private static final float RADIUS = 1.5F;
 	private static final int SEGMENTS = 28;
 	private static final int RESCAN_TICKS = 10;
 	private static final int MAX_CANDIDATES = 4000;
@@ -51,7 +49,7 @@ public final class RemoteSwitchClientFeature implements KhoaFeature {
 	private static final int RED = 0xFF3030;
 
 	/** What the v2 remote is aimed at right now (updated every frame). */
-	private record Target(BlockPos pos, boolean hit) {
+	private record Target(BlockPos pos, boolean hit, double radius) {
 	}
 
 	private static boolean on = true;
@@ -84,18 +82,17 @@ public final class RemoteSwitchClientFeature implements KhoaFeature {
 	@Override
 	public List<Setting> settings() {
 		return List.of(
-			Setting.slider("range", "Remote v2 range", "How far (blocks) Remote v2 looks for levers, buttons and pressure plates.", 16, 128,
-				RemoteSwitchClientFeature::range, v -> KhoaConfig.put(ID, "range", v)),
-			Setting.slider("near", "Show circle within", "Remote v2 shows the blue circle when your aim passes within this many blocks of a switch (the circle itself is 1.5 blocks).", 2, 8,
+			Setting.slider("near", "Show circle within", "Remote v2 shows the blue circle when your aim passes within this many blocks beyond the circle's edge of a switch.", 1, 12,
 				RemoteSwitchClientFeature::near, v -> KhoaConfig.put(ID, "near", v)));
 	}
 
+	/** Remote v2 works on every switch you can see: as far as your render distance. */
 	private static int range() {
-		return Math.max(16, Math.min(128, KhoaConfig.getInt(ID, "range", 64)));
+		return Math.max(2, Minecraft.getInstance().options.renderDistance().get()) * 16;
 	}
 
 	private static int near() {
-		return Math.max(2, Math.min(8, KhoaConfig.getInt(ID, "near", 4)));
+		return Math.max(1, Math.min(12, KhoaConfig.getInt(ID, "near", 4)));
 	}
 
 	@Override
@@ -220,10 +217,12 @@ public final class RemoteSwitchClientFeature implements KhoaFeature {
 
 	/** Pick the switch the aim is nearest to: distance from the aim point to the middle of the switch, measured on the plane through it facing you. */
 	private static void updateTarget(ClientLevel level, Vec3 eye, Vec3 look) {
-		double near = near();
+		double extra = near();
 		double maxDist = range();
 		BlockPos best = null;
 		double bestD = Double.MAX_VALUE;
+		double bestScore = Double.MAX_VALUE;
+		double bestRadius = RemoteSwitch.V2_BASE_RADIUS;
 		for (BlockPos p : candidates) {
 			Vec3 c = Vec3.atCenterOf(p);
 			Vec3 v = c.subtract(eye);
@@ -238,12 +237,17 @@ public final class RemoteSwitchClientFeature implements KhoaFeature {
 			}
 			Vec3 hit = eye.add(look.scale(dist / denom));
 			double d = hit.distanceTo(c);
-			if (d <= near && d < bestD && RemoteSwitch.isSwitchBlock(level.getBlockState(p))) {
-				bestD = d;
+			// the circle grows with distance, so compare in units of its own radius: the switch whose circle you aim nearest the middle of wins
+			double radius = RemoteSwitch.v2Radius(dist);
+			double score = d / radius;
+			if (d <= radius + extra && score < bestScore && RemoteSwitch.isSwitchBlock(level.getBlockState(p))) {
+				bestScore = score;
 				best = p;
+				bestRadius = radius;
+				bestD = d;
 			}
 		}
-		target = best == null ? null : new Target(best, bestD <= RADIUS);
+		target = best == null ? null : new Target(best, bestD <= bestRadius, bestRadius);
 	}
 
 	private static void draw(Vec3 eye) {
@@ -265,17 +269,18 @@ public final class RemoteSwitchClientFeature implements KhoaFeature {
 
 		GizmoStyle fill = GizmoStyle.fill(ARGB.color(hit ? 110 : 80, (rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255));
 		int stroke = ARGB.color(255, (rgb >> 16) & 255, (rgb >> 8) & 255, rgb & 255);
-		Vec3 prev = point(centre, u, w, 0);
+		double radius = t.radius();
+		Vec3 prev = point(centre, u, w, 0, radius);
 		for (int i = 1; i <= SEGMENTS; i++) {
-			Vec3 next = point(centre, u, w, i);
+			Vec3 next = point(centre, u, w, i, radius);
 			Gizmos.rect(centre, prev, next, centre, fill).setAlwaysOnTop();
 			Gizmos.line(prev, next, stroke, 3.0F).setAlwaysOnTop();
 			prev = next;
 		}
 	}
 
-	private static Vec3 point(Vec3 centre, Vec3 u, Vec3 w, int i) {
+	private static Vec3 point(Vec3 centre, Vec3 u, Vec3 w, int i, double radius) {
 		double a = 2 * Math.PI * i / SEGMENTS;
-		return centre.add(u.scale(Math.cos(a) * RADIUS)).add(w.scale(Math.sin(a) * RADIUS));
+		return centre.add(u.scale(Math.cos(a) * radius)).add(w.scale(Math.sin(a) * radius));
 	}
 }
