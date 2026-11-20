@@ -172,6 +172,14 @@ public final class Setting {
 		return s;
 	}
 
+	/** Like {@link #action(String, String, String, String, Runnable)} but the button text is read every frame (e.g. "Lock" / "Unlock"). */
+	public static Setting action(String key, String label, String description, Supplier<String> buttonText, Runnable run) {
+		Setting s = new Setting(key, label, description, Type.ACTION);
+		s.stringGet = buttonText;
+		s.action = run;
+		return s;
+	}
+
 	/**
 	 * A button row that opens the picker screen. {@code kinds} = what this row asks for: {@code List.of("item")} lists items AND
 	 * enchanted books, {@code List.of("block")} lists blocks only. The stored value is a list of "kind:namespace:id" strings,
