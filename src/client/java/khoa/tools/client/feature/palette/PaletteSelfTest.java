@@ -174,6 +174,16 @@ final class PaletteSelfTest {
 		return n;
 	}
 
+	private static void release(Minecraft mc) {
+		mc.options.keyUse.setDown(false);
+		mc.player.input.keyPresses = new Input(false, false, false, false, false, false, false);
+	}
+
+	private static void shiftClick(Minecraft mc) {
+		mc.player.input.keyPresses = new Input(false, false, false, false, false, true, false);
+		mc.options.keyUse.setDown(true);
+	}
+
 	private static Block blk(String path) {
 		Block b = BuiltInRegistries.BLOCK.getValue(net.minecraft.resources.Identifier.withDefaultNamespace(path));
 		if (b == Blocks.AIR) {
@@ -322,6 +332,48 @@ final class PaletteSelfTest {
 			mc.player.input.keyPresses = new Input(false, false, false, false, false, true, false);
 			mc.options.keyUse.setDown(true);
 		}, () -> expect(mc.gui.screen() instanceof PaletteScreen, "screen " + mc.gui.screen()), 4);
+
+		add("shift + click kept the selection; the Undo button is available after the apply", () -> {
+		}, () -> expect(PaletteClientFeature.min.equals(origin.offset(2, -1, 2)) && PaletteClientFeature.max.equals(origin.offset(7, -1, 7)) && PaletteClientFeature.undoDepth == 1,
+			"box " + PaletteClientFeature.min + " .. " + PaletteClientFeature.max + " depth " + PaletteClientFeature.undoDepth), 1);
+
+		add("screenshot with the Undo button", () -> shot(mc, "palettetest-4-undo-button"), null, 10);
+
+		add("list shows the new blocks, then Undo restores the old ones and refreshes the list", () -> {
+			PaletteScreen s = (PaletteScreen) mc.gui.screen();
+			write("  rows before undo: " + s.rowCount());
+			if (s.rowCount() != 4) {
+				throw new IllegalStateException("expected 4 block types after the apply, got " + s.rowCount());
+			}
+			release(mc);
+			s.pressUndo();
+		}, () -> expect(count(mc, Blocks.STONE_BRICKS) == 33 && count(mc, Blocks.MOSSY_STONE_BRICKS) == 0 && count(mc, Blocks.COBBLESTONE) == 0
+			&& PaletteClientFeature.undoDepth == 0 && mc.gui.screen() instanceof PaletteScreen s && s.rowCount() == 2,
+			"bricks " + count(mc, Blocks.STONE_BRICKS) + " depth " + PaletteClientFeature.undoDepth + " screen " + mc.gui.screen()), 40);
+
+		add("apply (1 of 2)", () -> {
+			release(mc);
+			((PaletteScreen) mc.gui.screen()).pressApply();
+		}, () -> expect(mc.gui.screen() == null && PaletteClientFeature.undoDepth == 1, "screen " + mc.gui.screen() + " depth " + PaletteClientFeature.undoDepth), 40);
+
+		add("shift + click again", () -> shiftClick(mc), () -> expect(mc.gui.screen() instanceof PaletteScreen, "screen " + mc.gui.screen()), 4);
+
+		add("apply (2 of 2)", () -> {
+			release(mc);
+			((PaletteScreen) mc.gui.screen()).pressApply();
+		}, () -> expect(mc.gui.screen() == null && PaletteClientFeature.undoDepth == 2, "screen " + mc.gui.screen() + " depth " + PaletteClientFeature.undoDepth), 40);
+
+		add("shift + click, then Undo twice", () -> {
+			shiftClick(mc);
+		}, () -> expect(mc.gui.screen() instanceof PaletteScreen, "screen " + mc.gui.screen()), 4);
+
+		add("two undos bring every block back", () -> {
+			release(mc);
+			PaletteScreen s = (PaletteScreen) mc.gui.screen();
+			s.pressUndo();
+			s.pressUndo();
+		}, () -> expect(count(mc, Blocks.STONE_BRICKS) == 33 && count(mc, Blocks.STONE) == 3 && PaletteClientFeature.undoDepth == 0,
+			"bricks " + count(mc, Blocks.STONE_BRICKS) + " depth " + PaletteClientFeature.undoDepth), 60);
 
 		add("Esc closes only the screen", () -> {
 			mc.options.keyUse.setDown(false);

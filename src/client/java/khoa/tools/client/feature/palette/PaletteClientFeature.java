@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Map;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
+import net.fabricmc.fabric.api.client.networking.v1.ClientPlayNetworking;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 import net.fabricmc.fabric.api.event.player.UseBlockCallback;
 import net.fabricmc.fabric.api.event.player.UseItemCallback;
@@ -23,6 +24,7 @@ import khoa.api.world.KhoaRay;
 import khoa.api.world.RayHit;
 import khoa.tools.client.feature.KhoaFeature;
 import khoa.tools.palette.BuildingPalette;
+import khoa.tools.palette.PaletteStatePayload;
 
 /**
  * Client half of the Building Palette ({@code /khoatools palette give}). With the palette in a hand:
@@ -47,6 +49,10 @@ public final class PaletteClientFeature implements KhoaFeature {
 	private static BlockPos current;
 	private static boolean dragging;
 	private static boolean wasDown;
+	/** How many applies of this selection the server can still undo (it tells us after every apply / undo). */
+	static int undoDepth;
+	/** Ticks until the open screen rescans its block list (block updates arrive a moment after the server's reply); 0 = none pending. */
+	static int rescanTicks;
 	private static ClientLevel selectionLevel;
 
 	@Override
@@ -67,6 +73,10 @@ public final class PaletteClientFeature implements KhoaFeature {
 
 	@Override
 	public void onInit() {
+		ClientPlayNetworking.registerGlobalReceiver(PaletteStatePayload.TYPE, (payload, context) -> {
+			undoDepth = payload.undoDepth();
+			rescanTicks = 4;
+		});
 		UseBlockCallback.EVENT.register((player, level, hand, hit) -> holding(player) ? InteractionResult.FAIL : InteractionResult.PASS);
 		UseItemCallback.EVENT.register((player, level, hand) -> holding(player) ? InteractionResult.FAIL : InteractionResult.PASS);
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
@@ -88,6 +98,7 @@ public final class PaletteClientFeature implements KhoaFeature {
 		current = null;
 		dragging = false;
 		PALETTES.clear();
+		undoDepth = 0;
 		selectionLevel = null;
 	}
 
@@ -124,6 +135,7 @@ public final class PaletteClientFeature implements KhoaFeature {
 				selectionLevel = mc.level;
 				setBox(anchor, current);
 				PALETTES.clear();
+		undoDepth = 0;
 			}
 			return;
 		}

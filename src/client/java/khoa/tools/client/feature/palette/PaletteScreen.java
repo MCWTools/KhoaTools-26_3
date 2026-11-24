@@ -23,6 +23,7 @@ import net.minecraft.world.level.block.state.BlockState;
 
 import khoa.api.picker.KhoaPalettePicker;
 import khoa.tools.palette.PaletteApplyPayload;
+import khoa.tools.palette.PaletteUndoPayload;
 
 /**
  * "Block palette randomizer": one row per block TYPE found in the selected box, with its count and a "Select palette" button (opens the
@@ -97,7 +98,33 @@ public final class PaletteScreen extends Screen {
 		int by = this.height - 26;
 		addRenderableWidget(Button.builder(Component.literal("Apply"), b -> apply()).bounds(this.width / 2 - 102, by, 100, 20).build());
 		addRenderableWidget(Button.builder(Component.literal("Cancel"), b -> onClose()).bounds(this.width / 2 + 2, by, 100, 20).build());
+		if (PaletteClientFeature.undoDepth > 0) { // only after an apply of this selection
+			addRenderableWidget(Button.builder(Component.literal("Undo (" + PaletteClientFeature.undoDepth + ")"), b -> undo()).bounds(this.width / 2 + 106, by, 80, 20).build());
+		}
 		clampScroll();
+	}
+
+	/** The server must keep ticking while this screen is open, or an Undo's block changes never reach the client in single player. */
+	@Override
+	public boolean isPauseScreen() {
+		return false;
+	}
+
+	private void undo() {
+		if (ClientPlayNetworking.canSend(PaletteUndoPayload.TYPE)) {
+			ClientPlayNetworking.send(new PaletteUndoPayload());
+			note = "Undoing...";
+		}
+	}
+
+	@Override
+	public void tick() {
+		super.tick();
+		if (PaletteClientFeature.rescanTicks > 0 && --PaletteClientFeature.rescanTicks == 0) {
+			rows.clear(); // the server changed blocks (apply / undo): refresh the list, palettes stay
+			scan();
+			rebuildWidgets(); // the Undo button follows the undo depth
+		}
 	}
 
 	private void clampScroll() {
@@ -206,6 +233,11 @@ public final class PaletteScreen extends Screen {
 		}
 		ClientPlayNetworking.send(new PaletteApplyPayload(PaletteClientFeature.min, PaletteClientFeature.max, entries));
 		onClose(); // selection and palettes stay
+	}
+
+	/** Self test: the Undo button handler. */
+	public void pressUndo() {
+		undo();
 	}
 
 	/** Self test: the Apply handler. */
