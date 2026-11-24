@@ -207,6 +207,11 @@ final class PaletteSelfTest {
 				sb.append("\n");
 			}
 			write(sb.toString().stripTrailing());
+			StringBuilder order = new StringBuilder("  gradient order:\n  ");
+			for (int i = 0; i < all.size(); i++) {
+				order.append(BuiltInRegistries.BLOCK.getKey(all.get(i)).getPath()).append(i % 12 == 11 ? "\n  " : ", ");
+			}
+			write(order.toString());
 			Block white = blk("white_wool");
 			Block red = blk("red_concrete");
 			if (BlockColorGroups.groupOf(white) != ColorGroup.WHITE || BlockColorGroups.groupOf(red) != ColorGroup.RED) {
@@ -288,7 +293,9 @@ final class PaletteSelfTest {
 		}, 4);
 
 		add("screenshot of the picker", () -> {
-			((KhoaPalettePicker) mc.gui.screen()).showGroup(ColorGroup.GRAY);
+			KhoaPalettePicker p = (KhoaPalettePicker) mc.gui.screen();
+			p.showGroup(null);
+			p.reveal(blk("lime_wool"));
 			shot(mc, "palettetest-3-picker");
 		}, null, 10);
 
