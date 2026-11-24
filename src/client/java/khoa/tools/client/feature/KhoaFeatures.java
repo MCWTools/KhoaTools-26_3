@@ -116,7 +116,13 @@ public final class KhoaFeatures {
 		new InventoryTweakFeature(),
 		new khoa.tools.client.feature.ghostitem.GhostItemFeature(),
 		new khoa.tools.client.feature.schematicguard.SchematicGuardFeature(),
-		new khoa.tools.client.feature.biggerhitbox.BiggerHitboxFeature()
+		new khoa.tools.client.feature.biggerhitbox.BiggerHitboxFeature(),
+		new khoa.tools.client.feature.lazychunk.LazyChunkVisualFeature(),
+		new khoa.tools.client.feature.remote.RemoteSwitchClientFeature(),
+		new khoa.tools.client.feature.movementhud.MovementHudFeature(),
+		new khoa.tools.client.feature.drawshape2.DrawShapeV2Feature(),
+		new khoa.tools.client.feature.heightlaser.HeightLaserFeature(),
+		new khoa.tools.client.feature.pallet.PalletClientFeature()
 		// new SimulateFeature() (hidden for now)
 		// add new features here
 	));

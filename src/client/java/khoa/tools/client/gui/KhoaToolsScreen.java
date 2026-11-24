@@ -22,6 +22,7 @@ import com.mojang.blaze3d.platform.InputConstants;
 
 import khoa.tools.KhoaTools;
 import khoa.tools.client.config.KhoaCommandBinds;
+import khoa.tools.client.config.KhoaConfig;
 import khoa.tools.client.config.KhoaKeybinds;
 import khoa.tools.client.feature.KhoaFeature;
 import khoa.tools.client.feature.KhoaFeatures;
@@ -150,6 +151,116 @@ public final class KhoaToolsScreen extends Screen {
 		return out;
 	}
 
+	// ------------------------------------------------------------------ pins
+
+	private static final String PIN_KEY = "pinned";
+	private static final int HEADER_H = 14;
+
+	/** Pinned feature ids, the most recently pinned first. Loaded once, written on every change. */
+	private final List<String> pinned = new ArrayList<>(KhoaConfig.getStringList(GuiAnim.SECTION, PIN_KEY));
+
+	/** An item of the list: a card or a section header, at its resting place (x relative to the frame, y inside the scrolled content). */
+	private record Placed(Card card, String key, String label, int index, int x, int y) {
+	}
+
+	private record Layout(List<Placed> items, int height) {
+	}
+
+	/** Where each item is drawn right now (it eases towards its resting place, which is what makes a pinned card fly). */
+	private final java.util.Map<String, float[]> animPos = new java.util.HashMap<>();
+	private long lastAnimNs;
+
+	private void togglePin(String id) {
+		if (!pinned.remove(id)) {
+			pinned.add(0, id);
+		}
+		KhoaConfig.putStringList(GuiAnim.SECTION, PIN_KEY, pinned);
+	}
+
+	/**
+	 * Pinned cards first (newest pin first) under a "Pinned" header, then the others under "Not Pinned". The headers only exist
+	 * while something is pinned (and, for "Not Pinned", while something is not).
+	 */
+	private Layout buildLayout() {
+		List<Card> all = cards();
+		List<Card> top = new ArrayList<>();
+		for (String id : pinned) {
+			for (Card c : all) {
+				if (c.id().equals(id)) {
+					top.add(c);
+					break;
+				}
+			}
+		}
+		List<Card> rest = new ArrayList<>(all);
+		rest.removeAll(top);
+		List<Placed> items = new ArrayList<>();
+		int y = 0;
+		int index = 0;
+		if (!top.isEmpty()) {
+			items.add(new Placed(null, "h:pinned", "Pinned", -1, 0, y));
+			y += HEADER_H;
+			y = placeGrid(items, top, y, index);
+			index += top.size();
+			if (!rest.isEmpty()) {
+				items.add(new Placed(null, "h:rest", "Not Pinned", -1, 0, y));
+				y += HEADER_H;
+			}
+		}
+		y = placeGrid(items, rest, y, index);
+		return new Layout(items, Math.max(0, y - GAP));
+	}
+
+	private int placeGrid(List<Placed> items, List<Card> cards, int startY, int firstIndex) {
+		int cw = cardW();
+		int ch = cardH();
+		for (int k = 0; k < cards.size(); k++) {
+			Card c = cards.get(k);
+			items.add(new Placed(c, "c:" + c.id(), null, firstIndex + k, (k % 2) * (cw + GAP), startY + (k / 2) * (ch + GAP)));
+		}
+		return startY + ((cards.size() + 1) / 2) * (ch + GAP);
+	}
+
+	/** Moves every item's drawn position a step towards its resting place. */
+	private void stepAnimation(Layout layout) {
+		long now = System.nanoTime();
+		float dt = lastAnimNs == 0 ? 0 : Math.min(0.1F, (now - lastAnimNs) / 1e9F);
+		lastAnimNs = now;
+		float k = 1 - (float) Math.exp(-dt * 12);
+		java.util.Set<String> seen = new java.util.HashSet<>();
+		for (Placed p : layout.items()) {
+			seen.add(p.key());
+			float[] pos = animPos.get(p.key());
+			if (pos == null) {
+				animPos.put(p.key(), new float[] { p.x(), p.y() });
+			} else if (!GuiAnim.enabled()) {
+				pos[0] = p.x();
+				pos[1] = p.y();
+			} else {
+				pos[0] += (p.x() - pos[0]) * k;
+				pos[1] += (p.y() - pos[1]) * k;
+				if (Math.abs(p.x() - pos[0]) < 0.5F && Math.abs(p.y() - pos[1]) < 0.5F) {
+					pos[0] = p.x();
+					pos[1] = p.y();
+				}
+			}
+		}
+		animPos.keySet().retainAll(seen); // an item that disappeared (search) starts at its place when it comes back
+	}
+
+	private boolean moving(Placed p) {
+		float[] pos = animPos.get(p.key());
+		return pos != null && (pos[0] != p.x() || pos[1] != p.y());
+	}
+
+	/** A small push pin (head, body, flange, needle) with its top left corner at (x, y). */
+	private static void drawPin(GuiGraphicsExtractor g, int x, int y, int color) {
+		g.fill(x + 1, y, x + 6, y + 2, color);
+		g.fill(x + 2, y + 2, x + 5, y + 5, color);
+		g.fill(x, y + 5, x + 7, y + 6, color);
+		g.fill(x + 3, y + 6, x + 4, y + 10, 0xFFDDDDDD);
+	}
+
 	// ------------------------------------------------------------------ layout
 
 	private int cardW() {
@@ -168,13 +279,8 @@ public final class KhoaToolsScreen extends Screen {
 		listBottom = this.height - 12;
 	}
 
-	private int contentHeight(int count) {
-		int rowsCount = (count + 1) / 2;
-		return rowsCount == 0 ? 0 : rowsCount * (cardH() + GAP) - GAP;
-	}
-
-	private double maxScroll(int count) {
-		return Math.max(0, contentHeight(count) - (listBottom - listTop));
+	private double maxScroll() {
+		return Math.max(0, buildLayout().height() - (listBottom - listTop));
 	}
 
 	// ------------------------------------------------------------------ widgets
@@ -472,49 +578,78 @@ public final class KhoaToolsScreen extends Screen {
 			}
 		}
 
-		List<Card> cards = cards();
-		scroll = Math.max(0, Math.min(scroll, maxScroll(cards.size())));
-		if (cards.isEmpty()) {
+		Layout layout = buildLayout();
+		scroll = Math.max(0, Math.min(scroll, Math.max(0, layout.height() - (listBottom - listTop))));
+		if (layout.items().isEmpty()) {
 			String message = "Nothing found.";
 			g.centeredText(this.font, message, this.width / 2, listTop + 20, COL_DIM);
 			return;
 		}
+		stepAnimation(layout);
 
 		g.enableScissor(0, listTop, this.width, listBottom); // full width: cards may slide in from the sides
-		int cw = cardW();
-		int ch = cardH();
-		long now = elapsed();
-		int cap = visibleCap();
-		for (int i = 0; i < cards.size(); i++) {
-			Card card = cards.get(i);
-			float e = GuiAnim.card(i, 2, cap, now); // a card that has not started stays invisible however the list is scrolled
-			if (e <= 0.01F) {
-				continue;
+		for (Placed p : layout.items()) {
+			if (p.card() == null) {
+				float[] pos = animPos.get(p.key());
+				int hy = listTop - (int) scroll + Math.round(pos[1]);
+				if (hy + HEADER_H >= listTop && hy <= listBottom) {
+					int tw = this.font.width(p.label());
+					g.text(this.font, p.label(), frameX + 2, hy + 2, GuiAnim.fade(0xFFFFCC33, top));
+					g.fill(frameX + tw + 8, hy + 6, frameX + frameW, hy + 7, GuiAnim.fade(0x60FFFFFF, top));
+				}
 			}
-			int x = frameX + (i % 2) * (cw + GAP) + GuiAnim.offsetX(i % 2, 2, e);
-			int y = listTop - (int) scroll + (i / 2) * (ch + GAP) + GuiAnim.offsetY(i % 2, 2, e); // follows the scroll
-			if (y + ch < listTop || y > listBottom) {
-				continue;
+		}
+		for (int pass = 0; pass < 2; pass++) { // cards that are flying are drawn last, on top of the resting ones
+			for (Placed p : layout.items()) {
+				if (p.card() != null && moving(p) == (pass == 1)) {
+					drawCard(g, p, mouseX, mouseY);
+				}
 			}
-			boolean active = card.active().getAsBoolean();
-			boolean inList = mouseY >= listTop && mouseY < listBottom;
-			boolean hover = e >= 1 && inList && inside(mouseX, mouseY, x, y, cw, ch);
-			g.fill(x, y, x + cw, y + ch, GuiAnim.fade(active ? (hover ? BG_ACTIVE_HOVER : BG_ACTIVE) : (hover ? BG_HOVER : BG_NORMAL), e));
-			border(g, x, y, x + cw, y + ch, GuiAnim.fade(active ? COL_GREEN : BORDER, e));
-
-			int bw = configButtonW(cw);
-			int bh = Math.min(ch - 10, 20);
-			int bx = x + cw - bw - 5;
-			int by = y + (ch - bh) / 2;
-			boolean overButton = e >= 1 && inList && inside(mouseX, mouseY, bx, by, bw, bh);
-			g.fill(bx, by, bx + bw, by + bh, GuiAnim.fade(overButton ? 0xC0505050 : 0xA0202020, e));
-			border(g, bx, by, bx + bw, by + bh, GuiAnim.fade(overButton ? COL_TEXT : 0xFF777777, e));
-			g.centeredText(this.font, "Config", bx + bw / 2, by + (bh - 8) / 2, GuiAnim.fade(COL_TEXT, e));
-
-			String name = this.font.plainSubstrByWidth(card.name(), bx - x - 14);
-			g.text(this.font, name, x + 8, y + (ch - 8) / 2, GuiAnim.fade(COL_TEXT, e));
 		}
 		g.disableScissor();
+	}
+
+	private void drawCard(GuiGraphicsExtractor g, Placed p, int mouseX, int mouseY) {
+		Card card = p.card();
+		int cw = cardW();
+		int ch = cardH();
+		float e = GuiAnim.card(p.index(), 2, visibleCap(), elapsed()); // a card that has not started stays invisible however the list is scrolled
+		if (e <= 0.01F) {
+			return;
+		}
+		float[] pos = animPos.get(p.key());
+		int col = p.x() > 0 ? 1 : 0;
+		int x = frameX + Math.round(pos[0]) + GuiAnim.offsetX(col, 2, e);
+		int y = listTop - (int) scroll + Math.round(pos[1]) + GuiAnim.offsetY(col, 2, e); // follows the scroll
+		if (y + ch < listTop || y > listBottom) {
+			return;
+		}
+		boolean isPinned = pinned.contains(card.id());
+		boolean active = card.active().getAsBoolean();
+		boolean inList = mouseY >= listTop && mouseY < listBottom;
+		boolean hover = e >= 1 && inList && inside(mouseX, mouseY, x, y, cw, ch);
+		g.fill(x, y, x + cw, y + ch, GuiAnim.fade(active ? (hover ? BG_ACTIVE_HOVER : BG_ACTIVE) : (hover ? BG_HOVER : BG_NORMAL), e));
+		border(g, x, y, x + cw, y + ch, GuiAnim.fade(active ? COL_GREEN : BORDER, e));
+
+		int bw = configButtonW(cw);
+		int bh = Math.min(ch - 10, 20);
+		int bx = x + cw - bw - 5;
+		int by = y + (ch - bh) / 2;
+		boolean overButton = e >= 1 && inList && inside(mouseX, mouseY, bx, by, bw, bh);
+		g.fill(bx, by, bx + bw, by + bh, GuiAnim.fade(overButton ? 0xC0505050 : 0xA0202020, e));
+		border(g, bx, by, bx + bw, by + bh, GuiAnim.fade(overButton ? COL_TEXT : 0xFF777777, e));
+		g.centeredText(this.font, "Config", bx + bw / 2, by + (bh - 8) / 2, GuiAnim.fade(COL_TEXT, e));
+
+		int textX = x + 8;
+		if (isPinned) {
+			drawPin(g, x + 4, y + 3, GuiAnim.fade(0xFFFFCC33, e));
+			textX = x + 16;
+		} else if (hover && (InputConstants.isKeyDown(InputConstants.KEY_LSHIFT) || InputConstants.isKeyDown(InputConstants.KEY_RSHIFT))) {
+			drawPin(g, x + 4, y + 3, GuiAnim.fade(0x80FFFFFF, e)); // Shift + click would pin it
+			textX = x + 16;
+		}
+		String name = this.font.plainSubstrByWidth(card.name(), bx - textX - 6);
+		g.text(this.font, name, textX, y + (ch - 8) / 2, GuiAnim.fade(COL_TEXT, e));
 	}
 
 	private void renderConfig(GuiGraphicsExtractor g, int mouseX, int mouseY) {
@@ -688,10 +823,10 @@ public final class KhoaToolsScreen extends Screen {
 		}
 		double mx = event.x();
 		double my = event.y();
-		return configCard == null ? clickList(mx, my) : clickConfig(mx, my);
+		return configCard == null ? clickList(mx, my, event.hasShiftDown()) : clickConfig(mx, my);
 	}
 
-	private boolean clickList(double mx, double my) {
+	private boolean clickList(double mx, double my, boolean shift) {
 		for (Tab t : Tab.values()) {
 			if (inside(mx, my, tabX(t), TAB_Y, TAB_W, TAB_H)) {
 				if (tab != t) {
@@ -704,27 +839,36 @@ public final class KhoaToolsScreen extends Screen {
 		if (my < listTop || my >= listBottom) {
 			return false;
 		}
-		List<Card> cards = cards();
+		Layout layout = buildLayout();
 		int cw = cardW();
 		int ch = cardH();
-		for (int i = 0; i < cards.size(); i++) {
-			int x = frameX + (i % 2) * (cw + GAP);
-			int y = listTop - (int) scroll + (i / 2) * (ch + GAP);
-			if (GuiAnim.card(i, 2, visibleCap(), elapsed()) < 1 || !inside(mx, my, x, y, cw, ch)) {
+		for (Placed p : layout.items()) {
+			Card card = p.card();
+			float[] pos = animPos.get(p.key());
+			if (card == null || pos == null) {
+				continue;
+			}
+			int x = frameX + Math.round(pos[0]);
+			int y = listTop - (int) scroll + Math.round(pos[1]);
+			if (GuiAnim.card(p.index(), 2, visibleCap(), elapsed()) < 1 || !inside(mx, my, x, y, cw, ch)) {
 				continue; // cards still flying in / not shown yet cannot be clicked
+			}
+			if (shift) {
+				togglePin(card.id()); // Shift + click only pins / unpins: it neither toggles the feature nor opens its config
+				return true;
 			}
 			int bw = configButtonW(cw);
 			int bh = Math.min(ch - 10, 20);
 			if (inside(mx, my, x + cw - bw - 5, y + (ch - bh) / 2, bw, bh)) {
-				configCard = cards.get(i);
+				configCard = card;
 				configScroll = 0;
 				waitingKey = false;
 				this.rebuildWidgets();
 			} else {
 				try {
-					cards.get(i).click().run();
+					card.click().run();
 				} catch (RuntimeException e) {
-					KhoaTools.LOGGER.error("Feature {} failed", cards.get(i).id(), e);
+					KhoaTools.LOGGER.error("Feature {} failed", card.id(), e);
 				}
 			}
 			return true;
@@ -883,7 +1027,7 @@ public final class KhoaToolsScreen extends Screen {
 	@Override
 	public boolean mouseScrolled(double x, double y, double scrollX, double scrollY) {
 		if (configCard == null) {
-			scroll = Math.max(0, Math.min(scroll - scrollY * 24, maxScroll(cards().size())));
+			scroll = Math.max(0, Math.min(scroll - scrollY * 24, maxScroll()));
 			return true;
 		}
 		if (openDropdown == null) {

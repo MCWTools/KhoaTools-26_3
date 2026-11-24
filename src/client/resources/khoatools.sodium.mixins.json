@@ -1,0 +1,12 @@
+{
+	"required": false,
+	"package": "khoa.tools.client.mixin.sodium",
+	"compatibilityLevel": "JAVA_25",
+	"client": [
+		"SodiumBlockRendererMixin",
+		"SodiumFluidRendererMixin"
+	],
+	"injectors": {
+		"defaultRequire": 0
+	}
+}

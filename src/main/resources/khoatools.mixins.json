@@ -5,7 +5,8 @@
 	"mixins": [
 		"ServerExplosionMixin",
 		"MobAiMixin",
-		"BlocksAttacksMixin"
+		"BlocksAttacksMixin",
+		"BasePressurePlateBlockMixin"
 	],
 	"injectors": {
 		"defaultRequire": 1

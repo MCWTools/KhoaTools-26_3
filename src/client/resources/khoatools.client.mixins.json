@@ -23,6 +23,8 @@
 		"BlockEntityRenderDispatcherMixin",
 		"BlockMixin",
 		"ModelBlockRendererMixin",
+		"LazyChunkTintMixin",
+		"LazyChunkFluidMixin",
 		"LevelBlockLogMixin",
 		"ParticleEngineMixin",
 		"SpawnerRenderStateMixin",

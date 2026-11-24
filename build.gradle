@@ -19,6 +19,25 @@ repositories {
 loom {
 	splitEnvironmentSourceSets()
 
+	// ./gradlew runClient -Pautotest : joins the dev world "New World", runs the in-process self test of Draw Shape V2 / Height Laser, closes the game
+	// ./gradlew runClient -Ppallettest : same, but runs the Building Pallet self test (PalletSelfTest) instead
+	if (project.hasProperty('pallettest')) {
+		runs {
+			client {
+				vmArg "-Dkhoatools.pallettest=true"
+				programArgs "--quickPlaySingleplayer", "New World"
+			}
+		}
+	}
+	if (project.hasProperty('autotest')) {
+		runs {
+			client {
+				vmArg "-Dkhoatools.autotest=true"
+				programArgs "--quickPlaySingleplayer", "New World"
+			}
+		}
+	}
+
 	mods {
 		"khoatools" {
 			sourceSet sourceSets.main
@@ -43,10 +62,18 @@ dependencies {
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
 	// KhoaAPILibs (modid khoaapi): a separate mod that players install next to KhoaTools. Compiled against, never bundled.
-	implementation files("libs/KhoaAPILibs-1.0.0.jar")
-	clientImplementation files("libs/KhoaAPILibs-1.0.0.jar")
+	implementation files("libs/KhoaAPILibs-1.3.0.jar")
+	clientImplementation files("libs/KhoaAPILibs-1.3.0.jar")
+
+	// self test only: run the dev game WITH Litematica, so the placement path of Draw Shape V2 is exercised
+	if (project.hasProperty('autotest')) {
+		runtimeOnly("fi.dy.masa.litematica:litematica-fabric-26.3:0.29.1") { transitive = false }
+		runtimeOnly("fi.dy.masa.malilib:malilib-fabric-26.3:0.30.2") { transitive = false }
+	}
 
 	// Optional at runtime (see LitematicaBridge); not bundled.
+	// Sodium 0.9.3-beta.5: compile-only (optional at runtime), used by the Lazy Chunk Visual mixins in mixin/sodium. Not bundled.
+	clientCompileOnly files("libs/sodium-compile-0.9.3-beta.5.jar")
 	clientCompileOnly("fi.dy.masa.litematica:litematica-fabric-26.3:0.29.1") { transitive = false }
 	clientCompileOnly("fi.dy.masa.malilib:malilib-fabric-26.3:0.30.2") { transitive = false }
 }

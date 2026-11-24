@@ -32,6 +32,10 @@
 			"environment": "client"
 		},
 		{
+			"config": "khoatools.sodium.mixins.json",
+			"environment": "client"
+		},
+		{
 			"config": "khoatools.skychanger.mixins.json",
 			"environment": "client"
 		}
@@ -41,6 +45,6 @@
 		"minecraft": "~26.3",
 		"java": ">=25",
 		"fabric-api": "*",
-		"khoaapi": ">=1.0.0"
+		"khoaapi": ">=1.3.0"
 	}
 }

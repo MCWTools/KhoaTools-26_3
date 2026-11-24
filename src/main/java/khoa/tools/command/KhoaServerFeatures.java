@@ -6,7 +6,9 @@ public final class KhoaServerFeatures {
 	private static final List<KhoaServerFeature> ALL = List.of(
 		new OptimizeTntFeature(),
 		new FarMobAiFeature(),
-		new ShieldBreakCdFeature()
+		new ShieldBreakCdFeature(),
+		new RemoteSwitchFeature(),
+		new PalletFeature()
 	);
 
 	private KhoaServerFeatures() {
