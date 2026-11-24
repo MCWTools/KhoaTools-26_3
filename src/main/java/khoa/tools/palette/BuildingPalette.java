@@ -1,4 +1,4 @@
-package khoa.tools.pallet;
+package khoa.tools.palette;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -29,29 +29,29 @@ import net.minecraft.world.level.block.state.BlockState;
 import khoa.tools.KhoaTools;
 
 /**
- * Building Pallet (server side). The item is a carrot on a stick with a {@code khoatools_pallet} compound in its custom_data and an enchantment glint.
- * The mod client selects a box and sends {@link PalletApplyPayload}; this class checks it and does the replacing.
+ * Building Palette (server side). The item is a carrot on a stick with a {@code khoatools_palette} compound in its custom_data and an enchantment glint.
+ * The mod client selects a box and sends {@link PaletteApplyPayload}; this class checks it and does the replacing.
  */
-public final class BuildingPallet {
-	public static final String TAG = "khoatools_pallet";
+public final class BuildingPalette {
+	public static final String TAG = "khoatools_palette";
 	/** Biggest box (in blocks) one apply may touch. */
 	public static final long MAX_VOLUME = 4_000_000L;
 	/** Biggest side length of the box. */
 	public static final int MAX_SIDE = 512;
 
-	private BuildingPallet() {
+	private BuildingPalette() {
 	}
 
 	public static ItemStack create() {
 		ItemStack stack = new ItemStack(Items.CARROT_ON_A_STICK);
 		CustomData.update(DataComponents.CUSTOM_DATA, stack, tag -> tag.put(TAG, new CompoundTag()));
 		stack.set(DataComponents.ENCHANTMENT_GLINT_OVERRIDE, true);
-		stack.set(DataComponents.CUSTOM_NAME, Component.literal("Building Pallet")
+		stack.set(DataComponents.CUSTOM_NAME, Component.literal("Building Palette")
 			.withStyle(Style.EMPTY.withBold(true).withItalic(false).withColor(TextColor.fromRgb(0x55FFAA))));
 		return stack;
 	}
 
-	public static boolean isPallet(ItemStack stack) {
+	public static boolean isPalette(ItemStack stack) {
 		if (stack == null || stack.isEmpty()) {
 			return false;
 		}
@@ -60,8 +60,8 @@ public final class BuildingPallet {
 	}
 
 	public static void init() {
-		PayloadTypeRegistry.serverboundPlay().register(PalletApplyPayload.TYPE, PalletApplyPayload.CODEC);
-		ServerPlayNetworking.registerGlobalReceiver(PalletApplyPayload.TYPE, (payload, context) -> {
+		PayloadTypeRegistry.serverboundPlay().register(PaletteApplyPayload.TYPE, PaletteApplyPayload.CODEC);
+		ServerPlayNetworking.registerGlobalReceiver(PaletteApplyPayload.TYPE, (payload, context) -> {
 			ServerPlayer player = context.player();
 			context.server().execute(() -> apply(player, payload));
 		});
@@ -76,13 +76,13 @@ public final class BuildingPallet {
 		return b == null || b == Blocks.AIR ? null : b;
 	}
 
-	private static void apply(ServerPlayer player, PalletApplyPayload payload) {
+	private static void apply(ServerPlayer player, PaletteApplyPayload payload) {
 		if (!Commands.LEVEL_GAMEMASTERS.check(player.permissions())) {
-			player.sendSystemMessage(Component.literal("Building Pallet: operators only."));
+			player.sendSystemMessage(Component.literal("Building Palette: operators only."));
 			return;
 		}
-		if (!isPallet(player.getMainHandItem()) && !isPallet(player.getOffhandItem())) {
-			player.sendSystemMessage(Component.literal("Building Pallet: hold the pallet to apply."));
+		if (!isPalette(player.getMainHandItem()) && !isPalette(player.getOffhandItem())) {
+			player.sendSystemMessage(Component.literal("Building Palette: hold the palette to apply."));
 			return;
 		}
 		BlockPos a = payload.min();
@@ -93,11 +93,11 @@ public final class BuildingPallet {
 		long sy = (long) hi.getY() - lo.getY() + 1;
 		long sz = (long) hi.getZ() - lo.getZ() + 1;
 		if (sx > MAX_SIDE || sy > MAX_SIDE || sz > MAX_SIDE || sx * sy * sz > MAX_VOLUME) {
-			player.sendSystemMessage(Component.literal("Building Pallet: the selection is too big (max " + MAX_SIDE + " per side, " + MAX_VOLUME + " blocks)."));
+			player.sendSystemMessage(Component.literal("Building Palette: the selection is too big (max " + MAX_SIDE + " per side, " + MAX_VOLUME + " blocks)."));
 			return;
 		}
 		Map<Block, List<BlockState>> palettes = new HashMap<>();
-		for (PalletApplyPayload.Entry e : payload.entries()) {
+		for (PaletteApplyPayload.Entry e : payload.entries()) {
 			Block source = block(e.source());
 			if (source == null) {
 				continue;
@@ -114,7 +114,7 @@ public final class BuildingPallet {
 			}
 		}
 		if (palettes.isEmpty()) {
-			player.sendSystemMessage(Component.literal("Building Pallet: no palette chosen."));
+			player.sendSystemMessage(Component.literal("Building Palette: no palette chosen."));
 			return;
 		}
 		ServerLevel level = player.level();
@@ -142,7 +142,7 @@ public final class BuildingPallet {
 				}
 			}
 		}
-		KhoaTools.LOGGER.info("Building Pallet: {} replaced {} blocks in {} -> {}", player.getName().getString(), changed, lo.toShortString(), hi.toShortString());
-		player.sendSystemMessage(Component.literal("Building Pallet: replaced " + changed + " blocks" + (skipped > 0 ? " (" + skipped + " unloaded columns skipped)" : "") + "."));
+		KhoaTools.LOGGER.info("Building Palette: {} replaced {} blocks in {} -> {}", player.getName().getString(), changed, lo.toShortString(), hi.toShortString());
+		player.sendSystemMessage(Component.literal("Building Palette: replaced " + changed + " blocks" + (skipped > 0 ? " (" + skipped + " unloaded columns skipped)" : "") + "."));
 	}
 }

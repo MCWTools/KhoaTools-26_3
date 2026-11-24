@@ -41,7 +41,7 @@ public class KhoaTools implements ModInitializer {
 			dispatcher.register(root);
 		});
 		khoa.tools.remote.RemoteSwitch.init();
-		khoa.tools.pallet.BuildingPallet.init();
+		khoa.tools.palette.BuildingPalette.init();
 		LOGGER.info("KhoaTools loaded");
 	}
 

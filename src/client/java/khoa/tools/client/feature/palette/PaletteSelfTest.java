@@ -1,4 +1,4 @@
-package khoa.tools.client.feature.pallet;
+package khoa.tools.client.feature.palette;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -27,18 +27,18 @@ import net.minecraft.world.phys.Vec3;
 import khoa.api.picker.BlockColorGroups;
 import khoa.api.picker.ColorGroup;
 import khoa.api.picker.KhoaPalettePicker;
-import khoa.tools.pallet.BuildingPallet;
+import khoa.tools.palette.BuildingPalette;
 
 /**
- * In-process test of the Building Pallet (dev only: {@code gradlew runClient -Ppallettest}). Drives the real path: give command, held right
+ * In-process test of the Building Palette (dev only: {@code gradlew runClient -Ppalettetest}). Drives the real path: give command, held right
  * click + aim to select, the screen, the colour sorted picker, Apply to the integrated server, shift + right click to reopen.
- * Writes run/config/khoatools-pallettest.log and run/screenshots/pallettest-*.png, then closes the game.
+ * Writes run/config/khoatools-palettetest.log and run/screenshots/palettetest-*.png, then closes the game.
  */
-final class PalletSelfTest {
+final class PaletteSelfTest {
 	private record Step(String name, Runnable action, Supplier<String> check, int delay) {
 	}
 
-	private static final boolean AUTO = System.getProperty("khoatools.pallettest") != null;
+	private static final boolean AUTO = System.getProperty("khoatools.palettetest") != null;
 	private static final List<Step> STEPS = new ArrayList<>();
 	private static boolean started;
 	private static int index;
@@ -50,7 +50,7 @@ final class PalletSelfTest {
 	private static Path log;
 	private static BlockPos origin;
 
-	private PalletSelfTest() {
+	private PaletteSelfTest() {
 	}
 
 	static void tick(Minecraft mc) {
@@ -64,7 +64,7 @@ final class PalletSelfTest {
 			worldTicks = mc.player != null && mc.level != null && mc.gui.screen() == null ? worldTicks + 1 : 0;
 			if (worldTicks > 100) {
 				started = true;
-				log = FabricLoader.getInstance().getConfigDir().resolve("khoatools-pallettest.log");
+				log = FabricLoader.getInstance().getConfigDir().resolve("khoatools-palettetest.log");
 				try {
 					Files.writeString(log, "", StandardCharsets.UTF_8);
 				} catch (IOException ignored) {
@@ -125,7 +125,7 @@ final class PalletSelfTest {
 	}
 
 	private static void write(String line) {
-		System.out.println("[KhoaTools pallettest] " + line);
+		System.out.println("[KhoaTools palettetest] " + line);
 		if (log != null) {
 			try {
 				Files.writeString(log, line + System.lineSeparator(), StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.APPEND);
@@ -216,21 +216,21 @@ final class PalletSelfTest {
 				&& all.indexOf(red) < all.indexOf(Blocks.COAL_ORE) && !all.contains(blk("lilac")), "order wrong");
 		}, 1);
 
-		add("give the pallet", () -> {
+		add("give the palette", () -> {
 			origin = mc.player.blockPosition();
-			cmd(mc, "khoatools pallet give @s");
+			cmd(mc, "khoatools palette give @s");
 		}, () -> {
 			for (int i = 0; i < 9; i++) {
-				if (BuildingPallet.isPallet(mc.player.getInventory().getItem(i))) {
+				if (BuildingPalette.isPalette(mc.player.getInventory().getItem(i))) {
 					return null;
 				}
 			}
-			return "pallet not in the hotbar";
+			return "palette not in the hotbar";
 		}, 20);
 
 		add("hold it and build a 6x6 floor", () -> {
 			for (int i = 0; i < 9; i++) {
-				if (BuildingPallet.isPallet(mc.player.getInventory().getItem(i))) {
+				if (BuildingPalette.isPalette(mc.player.getInventory().getItem(i))) {
 					mc.player.getInventory().setSelectedSlot(i);
 				}
 			}
@@ -239,32 +239,32 @@ final class PalletSelfTest {
 			cmd(mc, "setblock " + (origin.getX() + 3) + " " + (origin.getY() - 1) + " " + (origin.getZ() + 3) + " stone");
 			cmd(mc, "setblock " + (origin.getX() + 5) + " " + (origin.getY() - 1) + " " + (origin.getZ() + 4) + " stone");
 			cmd(mc, "setblock " + (origin.getX() + 6) + " " + (origin.getY() - 1) + " " + (origin.getZ() + 6) + " stone");
-		}, () -> expect(BuildingPallet.isPallet(mc.player.getMainHandItem()) && count(mc, Blocks.STONE_BRICKS) == 33 && count(mc, Blocks.STONE) == 3,
+		}, () -> expect(BuildingPalette.isPalette(mc.player.getMainHandItem()) && count(mc, Blocks.STONE_BRICKS) == 33 && count(mc, Blocks.STONE) == 3,
 			"setup: stone bricks " + count(mc, Blocks.STONE_BRICKS) + ", stone " + count(mc, Blocks.STONE)), 30);
 
 		add("right click on corner A", () -> {
 			lookAt(mc, topCenter(2, 2));
 			mc.options.keyUse.setDown(true);
-		}, () -> expect(PalletClientFeature.min != null, "no selection started"), 4);
+		}, () -> expect(PaletteClientFeature.min != null, "no selection started"), 4);
 
 		add("drag to corner B", () -> lookAt(mc, topCenter(7, 7)), () -> {
-			BlockPos min = PalletClientFeature.min;
-			BlockPos max = PalletClientFeature.max;
+			BlockPos min = PaletteClientFeature.min;
+			BlockPos max = PaletteClientFeature.max;
 			return expect(min != null && max.getX() - min.getX() == 5 && max.getZ() - min.getZ() == 5, "box " + min + " .. " + max);
 		}, 4);
 
-		add("screenshot of the selection box", () -> shot(mc, "pallettest-1-box"), null, 10);
+		add("screenshot of the selection box", () -> shot(mc, "palettetest-1-box"), null, 10);
 
 		add("release: the randomizer opens, 2 block types", () -> mc.options.keyUse.setDown(false), () -> {
-			if (!(mc.gui.screen() instanceof PalletScreen s)) {
+			if (!(mc.gui.screen() instanceof PaletteScreen s)) {
 				return "screen is " + mc.gui.screen();
 			}
 			return expect(s.rowCount() == 2, "rows " + s.rowCount() + " note: " + s.note());
 		}, 6);
 
-		add("screenshot of the randomizer", () -> shot(mc, "pallettest-2-screen"), null, 10);
+		add("screenshot of the randomizer", () -> shot(mc, "palettetest-2-screen"), null, 10);
 
-		add("Select pallet on stone bricks: picker starts with the block itself", () -> ((PalletScreen) mc.gui.screen()).pickFor(Blocks.STONE_BRICKS), () -> {
+		add("Select palette on stone bricks: picker starts with the block itself", () -> ((PaletteScreen) mc.gui.screen()).pickFor(Blocks.STONE_BRICKS), () -> {
 			if (!(mc.gui.screen() instanceof KhoaPalettePicker p)) {
 				return "picker not open: " + mc.gui.screen();
 			}
@@ -289,14 +289,14 @@ final class PalletSelfTest {
 
 		add("screenshot of the picker", () -> {
 			((KhoaPalettePicker) mc.gui.screen()).showGroup(ColorGroup.GRAY);
-			shot(mc, "pallettest-3-picker");
+			shot(mc, "palettetest-3-picker");
 		}, null, 10);
 
 		add("Done: the palette is stored", () -> ((KhoaPalettePicker) mc.gui.screen()).pressDone(), () -> expect(
-			mc.gui.screen() instanceof PalletScreen && PalletClientFeature.PALETTES.get(Blocks.STONE_BRICKS) != null && PalletClientFeature.PALETTES.get(Blocks.STONE_BRICKS).size() == 3,
-			"screen " + mc.gui.screen() + " palettes " + PalletClientFeature.PALETTES), 4);
+			mc.gui.screen() instanceof PaletteScreen && PaletteClientFeature.PALETTES.get(Blocks.STONE_BRICKS) != null && PaletteClientFeature.PALETTES.get(Blocks.STONE_BRICKS).size() == 3,
+			"screen " + mc.gui.screen() + " palettes " + PaletteClientFeature.PALETTES), 4);
 
-		add("Apply", () -> ((PalletScreen) mc.gui.screen()).pressApply(), () -> expect(mc.gui.screen() == null, "screen still open"), 40);
+		add("Apply", () -> ((PaletteScreen) mc.gui.screen()).pressApply(), () -> expect(mc.gui.screen() == null, "screen still open"), 40);
 
 		add("blocks randomised, stone untouched", () -> {
 		}, () -> {
@@ -309,22 +309,22 @@ final class PalletSelfTest {
 		}, 1);
 
 		add("selection and palettes survived Apply", () -> {
-		}, () -> expect(PalletClientFeature.min != null && PalletClientFeature.PALETTES.size() == 1, "selection cleared " + PalletClientFeature.PALETTES), 1);
+		}, () -> expect(PaletteClientFeature.min != null && PaletteClientFeature.PALETTES.size() == 1, "selection cleared " + PaletteClientFeature.PALETTES), 1);
 
 		add("shift + right click reopens the screen", () -> {
 			mc.player.input.keyPresses = new Input(false, false, false, false, false, true, false);
 			mc.options.keyUse.setDown(true);
-		}, () -> expect(mc.gui.screen() instanceof PalletScreen, "screen " + mc.gui.screen()), 4);
+		}, () -> expect(mc.gui.screen() instanceof PaletteScreen, "screen " + mc.gui.screen()), 4);
 
 		add("Esc closes only the screen", () -> {
 			mc.options.keyUse.setDown(false);
 			mc.player.input.keyPresses = new Input(false, false, false, false, false, false, false);
 			mc.gui.screen().onClose();
-		}, () -> expect(mc.gui.screen() == null && PalletClientFeature.PALETTES.size() == 1 && PalletClientFeature.min != null, "state lost"), 4);
+		}, () -> expect(mc.gui.screen() == null && PaletteClientFeature.PALETTES.size() == 1 && PaletteClientFeature.min != null, "state lost"), 4);
 
 		add("tidy up", () -> {
 			cmd(mc, "fill " + (origin.getX() + 2) + " " + (origin.getY() - 1) + " " + (origin.getZ() + 2) + " " + (origin.getX() + 7) + " " + (origin.getY() - 1) + " " + (origin.getZ() + 7) + " grass_block");
-			PalletClientFeature.clear();
+			PaletteClientFeature.clear();
 		}, null, 10);
 	}
 

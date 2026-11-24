@@ -13,33 +13,33 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraft.world.item.ItemStack;
 
-import khoa.tools.pallet.BuildingPallet;
+import khoa.tools.palette.BuildingPalette;
 
-/** /khoatools pallet give [targets]: hands out the Building Pallet (see {@link BuildingPallet}). */
-public final class PalletFeature implements KhoaServerFeature {
+/** /khoatools palette give [targets]: hands out the Building Palette (see {@link BuildingPalette}). */
+public final class PaletteFeature implements KhoaServerFeature {
 	@Override
 	public String id() {
-		return "pallet";
+		return "palette";
 	}
 
 	@Override
 	public String displayName() {
-		return "Building Pallet";
+		return "Building Palette";
 	}
 
 	@Override
 	public String description() {
-		return "Gives the Building Pallet: hold right click and drag over blocks to select a box, then randomise block types with palettes.";
+		return "Gives the Building Palette: hold right click and drag over blocks to select a box, then randomise block types with palettes.";
 	}
 
 	private static int give(CommandSourceStack source, Collection<ServerPlayer> targets) {
 		for (ServerPlayer player : targets) {
-			ItemStack stack = BuildingPallet.create();
+			ItemStack stack = BuildingPalette.create();
 			if (!player.getInventory().add(stack)) {
 				player.spawnAtLocation(player.level(), stack);
 			}
 		}
-		source.sendSuccess(() -> Component.literal("Gave a Building Pallet to " + targets.size() + " player(s)."), true);
+		source.sendSuccess(() -> Component.literal("Gave a Building Palette to " + targets.size() + " player(s)."), true);
 		return targets.size();
 	}
 

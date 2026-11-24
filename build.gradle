@@ -20,11 +20,11 @@ loom {
 	splitEnvironmentSourceSets()
 
 	// ./gradlew runClient -Pautotest : joins the dev world "New World", runs the in-process self test of Draw Shape V2 / Height Laser, closes the game
-	// ./gradlew runClient -Ppallettest : same, but runs the Building Pallet self test (PalletSelfTest) instead
-	if (project.hasProperty('pallettest')) {
+	// ./gradlew runClient -Ppalettetest : same, but runs the Building Palette self test (PaletteSelfTest) instead
+	if (project.hasProperty('palettetest')) {
 		runs {
 			client {
-				vmArg "-Dkhoatools.pallettest=true"
+				vmArg "-Dkhoatools.palettetest=true"
 				programArgs "--quickPlaySingleplayer", "New World"
 			}
 		}

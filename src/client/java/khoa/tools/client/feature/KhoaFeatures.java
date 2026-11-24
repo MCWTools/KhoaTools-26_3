@@ -122,7 +122,7 @@ public final class KhoaFeatures {
 		new khoa.tools.client.feature.movementhud.MovementHudFeature(),
 		new khoa.tools.client.feature.drawshape2.DrawShapeV2Feature(),
 		new khoa.tools.client.feature.heightlaser.HeightLaserFeature(),
-		new khoa.tools.client.feature.pallet.PalletClientFeature()
+		new khoa.tools.client.feature.palette.PaletteClientFeature()
 		// new SimulateFeature() (hidden for now)
 		// add new features here
 	));

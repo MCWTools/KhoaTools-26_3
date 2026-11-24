@@ -8,7 +8,7 @@ public final class KhoaServerFeatures {
 		new FarMobAiFeature(),
 		new ShieldBreakCdFeature(),
 		new RemoteSwitchFeature(),
-		new PalletFeature()
+		new PaletteFeature()
 	);
 
 	private KhoaServerFeatures() {

@@ -1,4 +1,4 @@
-package khoa.tools.client.feature.pallet;
+package khoa.tools.client.feature.palette;
 
 import java.util.HashMap;
 import java.util.List;
@@ -22,19 +22,19 @@ import net.minecraft.world.phys.AABB;
 import khoa.api.world.KhoaRay;
 import khoa.api.world.RayHit;
 import khoa.tools.client.feature.KhoaFeature;
-import khoa.tools.pallet.BuildingPallet;
+import khoa.tools.palette.BuildingPalette;
 
 /**
- * Client half of the Building Pallet ({@code /khoatools pallet give}). With the pallet in a hand:
+ * Client half of the Building Palette ({@code /khoatools palette give}). With the palette in a hand:
  * <ul>
  * <li>Hold right click on a block (as far as your render distance) and drag to another one: a box grows between them.</li>
- * <li>Release: the box stays and the "Block pallet randomizer" screen opens ({@link PalletScreen}).</li>
+ * <li>Release: the box stays and the "Block palette randomizer" screen opens ({@link PaletteScreen}).</li>
  * <li>Shift + right click reopens the screen for the same box (palettes you chose are kept).</li>
  * </ul>
- * Right clicks with the pallet never reach the server (no block gets used). Needs KhoaTools on the server to apply.
+ * Right clicks with the palette never reach the server (no block gets used). Needs KhoaTools on the server to apply.
  */
-public final class PalletClientFeature implements KhoaFeature {
-	private static final String ID = "pallet";
+public final class PaletteClientFeature implements KhoaFeature {
+	private static final String ID = "palette";
 	private static final int COLOR = 0x55FFAA;
 
 	/** The selection (null = none). */
@@ -56,12 +56,12 @@ public final class PalletClientFeature implements KhoaFeature {
 
 	@Override
 	public String displayName() {
-		return "Building Pallet";
+		return "Building Palette";
 	}
 
 	@Override
 	public String description() {
-		return "Client side of /khoatools pallet give. Hold right click on a block and drag to another to select a box, release to open the Block pallet randomizer "
+		return "Client side of /khoatools palette give. Hold right click on a block and drag to another to select a box, release to open the Block palette randomizer "
 			+ "(choose a palette per block type, Apply replaces each with a random block of its palette). Shift + right click reopens it. No settings.";
 	}
 
@@ -70,14 +70,14 @@ public final class PalletClientFeature implements KhoaFeature {
 		UseBlockCallback.EVENT.register((player, level, hand, hit) -> holding(player) ? InteractionResult.FAIL : InteractionResult.PASS);
 		UseItemCallback.EVENT.register((player, level, hand) -> holding(player) ? InteractionResult.FAIL : InteractionResult.PASS);
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
-			PalletSelfTest.tick(mc);
+			PaletteSelfTest.tick(mc);
 			tick(mc);
 		});
 		LevelRenderEvents.END_EXTRACTION.register(context -> draw(Minecraft.getInstance()));
 	}
 
 	static boolean holding(Player player) {
-		return BuildingPallet.isPallet(player.getMainHandItem()) || BuildingPallet.isPallet(player.getOffhandItem());
+		return BuildingPalette.isPalette(player.getMainHandItem()) || BuildingPalette.isPalette(player.getOffhandItem());
 	}
 
 	/** Drops the selection and its palettes. */
@@ -112,7 +112,7 @@ public final class PalletClientFeature implements KhoaFeature {
 		if (pressed) {
 			if (mc.player.isShiftKeyDown()) {
 				if (min != null) {
-					mc.gui.setScreen(new PalletScreen());
+					mc.gui.setScreen(new PaletteScreen());
 				}
 				return;
 			}
@@ -136,7 +136,7 @@ public final class PalletClientFeature implements KhoaFeature {
 				}
 			} else {
 				dragging = false;
-				mc.gui.setScreen(new PalletScreen());
+				mc.gui.setScreen(new PaletteScreen());
 			}
 		}
 	}

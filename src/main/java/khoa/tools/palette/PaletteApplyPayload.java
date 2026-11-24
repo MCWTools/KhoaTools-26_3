@@ -1,4 +1,4 @@
-package khoa.tools.pallet;
+package khoa.tools.palette;
 
 import java.util.List;
 
@@ -17,7 +17,7 @@ import khoa.tools.KhoaTools;
  * @param max     highest corner (inclusive)
  * @param entries one per source block type that has a palette
  */
-public record PalletApplyPayload(BlockPos min, BlockPos max, List<Entry> entries) implements CustomPacketPayload {
+public record PaletteApplyPayload(BlockPos min, BlockPos max, List<Entry> entries) implements CustomPacketPayload {
 	/** @param source block id of the type to replace; @param palette block ids to pick from at random */
 	public record Entry(String source, List<String> palette) {
 		public static final StreamCodec<RegistryFriendlyByteBuf, Entry> CODEC = StreamCodec.composite(
@@ -26,12 +26,12 @@ public record PalletApplyPayload(BlockPos min, BlockPos max, List<Entry> entries
 			Entry::new);
 	}
 
-	public static final Type<PalletApplyPayload> TYPE = new Type<>(KhoaTools.id("pallet_apply"));
-	public static final StreamCodec<RegistryFriendlyByteBuf, PalletApplyPayload> CODEC = StreamCodec.composite(
-		BlockPos.STREAM_CODEC, PalletApplyPayload::min,
-		BlockPos.STREAM_CODEC, PalletApplyPayload::max,
-		Entry.CODEC.apply(ByteBufCodecs.list()), PalletApplyPayload::entries,
-		PalletApplyPayload::new);
+	public static final Type<PaletteApplyPayload> TYPE = new Type<>(KhoaTools.id("palette_apply"));
+	public static final StreamCodec<RegistryFriendlyByteBuf, PaletteApplyPayload> CODEC = StreamCodec.composite(
+		BlockPos.STREAM_CODEC, PaletteApplyPayload::min,
+		BlockPos.STREAM_CODEC, PaletteApplyPayload::max,
+		Entry.CODEC.apply(ByteBufCodecs.list()), PaletteApplyPayload::entries,
+		PaletteApplyPayload::new);
 
 	@Override
 	public Type<? extends CustomPacketPayload> type() {

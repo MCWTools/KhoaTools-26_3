@@ -1,4 +1,4 @@
-﻿# KhoaTools (26.3) Project Status
+# KhoaTools (26.3) Project Status
 
 ## 2026-11-14: Switched to KhoaAPILibs (1.3.0)
 
@@ -192,8 +192,8 @@
 - Layout trap fixed: config screen rows shrink on small windows so the viewport keeps room.
 
 
-## 2026-11-24: Building Pallet (1.7.0, needs KhoaAPILibs >= 1.3.0)
-- Server: `/khoatools pallet give [targets]` (op) gives a carrot on a stick named "Building Pallet" (custom_data `khoatools_pallet`, enchant glint). `khoa.tools.pallet.BuildingPallet` + `PalletApplyPayload` (client -> server): the server re-checks op permission, that a pallet is held, box size (max 512 per side / 4,000,000 blocks), only loaded columns, and replaces each chosen source type with a random block of its palette (blocks with a block entity are skipped so chests keep their items). Chat feedback with the replaced count.
-- Client: `PalletClientFeature` (card "Building Pallet"): hold right click on a block as far as render distance and drag to another to grow a selection box (Gizmos overlay, drawn while the pallet is held); release opens `PalletScreen` "Block pallet randomizer": one row per block TYPE (count, scrollable) with a "Select pallet" button -> `KhoaPalettePicker` (block itself preselected). Apply sends every type with a palette, Cancel / Esc only close; selection and palettes stay; shift + right click reopens it (rescans the box). A new selection clears the palettes. Right clicks with the pallet never reach the server.
-- Self test: `gradlew runClient -Ppallettest` (dev world "New World"): 18/18 steps passed (give, hold, select by aim + held key, 2 types found, picker preselect, pick 2 blocks, Done, Apply -> 33 stone bricks became 11/11/11 bricks/mossy/cobble, stone untouched, selection kept, shift + right click reopens, Esc keeps state); screenshots in run/screenshots/pallettest-*.png inspected.
+## 2026-11-24: Building Palette (1.7.0, needs KhoaAPILibs >= 1.3.0)
+- Server: `/khoatools palette give [targets]` (op) gives a carrot on a stick named "Building Palette" (custom_data `khoatools_palette`, enchant glint). `khoa.tools.palette.BuildingPalette` + `PaletteApplyPayload` (client -> server): the server re-checks op permission, that a palette is held, box size (max 512 per side / 4,000,000 blocks), only loaded columns, and replaces each chosen source type with a random block of its palette (blocks with a block entity are skipped so chests keep their items). Chat feedback with the replaced count.
+- Client: `PaletteClientFeature` (card "Building Palette"): hold right click on a block as far as render distance and drag to another to grow a selection box (Gizmos overlay, drawn while the palette is held); release opens `PaletteScreen` "Block palette randomizer": one row per block TYPE (count, scrollable) with a "Select palette" button -> `KhoaPalettePicker` (block itself preselected). Apply sends every type with a palette, Cancel / Esc only close; selection and palettes stay; shift + right click reopens it (rescans the box). A new selection clears the palettes. Right clicks with the palette never reach the server.
+- Self test: `gradlew runClient -Ppalettetest` (dev world "New World"): 18/18 steps passed (give, hold, select by aim + held key, 2 types found, picker preselect, pick 2 blocks, Done, Apply -> 33 stone bricks became 11/11/11 bricks/mossy/cobble, stone untouched, selection kept, shift + right click reopens, Esc keeps state); screenshots in run/screenshots/palettetest-*.png inspected.
 - Verified: `gradlew build` OK (jar khoatools-1.7.0.jar). NOT verified: real mouse feel, dedicated server, very large selections, protection plugins.

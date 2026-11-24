@@ -40,7 +40,7 @@ final class FeatureSelfTest {
 	private record Step(String name, Runnable action, Supplier<String> check, int delay) {
 	}
 
-	private static final boolean AUTO = System.getProperty("khoatools.autotest") != null && System.getProperty("khoatools.pallettest") == null;
+	private static final boolean AUTO = System.getProperty("khoatools.autotest") != null && System.getProperty("khoatools.palettetest") == null;
 	private static final List<Step> STEPS = new ArrayList<>();
 	private static boolean built;
 	private static boolean started;

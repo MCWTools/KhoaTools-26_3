@@ -1,4 +1,4 @@
-package khoa.tools.client.feature.pallet;
+package khoa.tools.client.feature.palette;
 
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -22,14 +22,14 @@ import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 
 import khoa.api.picker.KhoaPalettePicker;
-import khoa.tools.pallet.PalletApplyPayload;
+import khoa.tools.palette.PaletteApplyPayload;
 
 /**
- * "Block pallet randomizer": one row per block TYPE found in the selected box, with its count and a "Select pallet" button (opens the
+ * "Block palette randomizer": one row per block TYPE found in the selected box, with its count and a "Select palette" button (opens the
  * colour sorted {@link KhoaPalettePicker}, the block itself already inside). Apply sends every type that has a palette to the server.
- * Esc / Cancel only close the screen: the selection and the palettes stay (shift + right click with the pallet reopens it).
+ * Esc / Cancel only close the screen: the selection and the palettes stay (shift + right click with the palette reopens it).
  */
-public final class PalletScreen extends Screen {
+public final class PaletteScreen extends Screen {
 	private static final int ROW_H = 26;
 	private static final int BTN_W = 96;
 	/** Scanning more blocks than this on the client is refused (it would freeze the game). */
@@ -46,14 +46,14 @@ public final class PalletScreen extends Screen {
 	private int listW;
 	private int listH;
 
-	public PalletScreen() {
-		super(Component.literal("Block pallet randomizer"));
+	public PaletteScreen() {
+		super(Component.literal("Block palette randomizer"));
 		scan();
 	}
 
 	private void scan() {
-		BlockPos min = PalletClientFeature.min;
-		BlockPos max = PalletClientFeature.max;
+		BlockPos min = PaletteClientFeature.min;
+		BlockPos max = PaletteClientFeature.max;
 		var level = net.minecraft.client.Minecraft.getInstance().level;
 		if (min == null || level == null) {
 			note = "No selection.";
@@ -105,7 +105,7 @@ public final class PalletScreen extends Screen {
 	}
 
 	private int chosen(Block b) {
-		List<Block> p = PalletClientFeature.PALETTES.get(b);
+		List<Block> p = PaletteClientFeature.PALETTES.get(b);
 		return p == null ? 0 : p.size();
 	}
 
@@ -136,7 +136,7 @@ public final class PalletScreen extends Screen {
 			boolean over = mx >= bx && mx < bx + BTN_W && my >= y + 2 && my < y + ROW_H - 4 && my >= listY && my < listY + listH;
 			g.fill(bx, y + 2, bx + BTN_W, y + ROW_H - 4, over ? 0xFF4A6A4A : 0xFF334433);
 			g.outline(bx, y + 2, BTN_W, ROW_H - 6, 0xFF668866);
-			g.centeredText(this.font, Component.literal(n > 0 ? "Pallet (" + n + ")" : "Select pallet"), bx + BTN_W / 2, y + 8, 0xFFFFFFFF);
+			g.centeredText(this.font, Component.literal(n > 0 ? "Palette (" + n + ")" : "Select palette"), bx + BTN_W / 2, y + 8, 0xFFFFFFFF);
 		}
 		g.disableScissor();
 		if (rows.isEmpty()) {
@@ -166,12 +166,12 @@ public final class PalletScreen extends Screen {
 	}
 
 	private void openPicker(Block block) {
-		List<Block> start = PalletClientFeature.PALETTES.get(block);
+		List<Block> start = PaletteClientFeature.PALETTES.get(block);
 		KhoaPalettePicker.open(this, "Palette for " + block.getName().getString(), start == null ? List.of(block) : start, picked -> {
 			if (picked.isEmpty()) {
-				PalletClientFeature.PALETTES.remove(block);
+				PaletteClientFeature.PALETTES.remove(block);
 			} else {
-				PalletClientFeature.PALETTES.put(block, picked);
+				PaletteClientFeature.PALETTES.put(block, picked);
 			}
 		});
 	}
@@ -184,9 +184,9 @@ public final class PalletScreen extends Screen {
 	}
 
 	private void apply() {
-		List<PalletApplyPayload.Entry> entries = new ArrayList<>();
+		List<PaletteApplyPayload.Entry> entries = new ArrayList<>();
 		for (Row r : rows) {
-			List<Block> palette = PalletClientFeature.PALETTES.get(r.block());
+			List<Block> palette = PaletteClientFeature.PALETTES.get(r.block());
 			if (palette == null || palette.isEmpty() || (palette.size() == 1 && palette.get(0) == r.block())) {
 				continue; // no palette, or a palette of itself only: nothing to change
 			}
@@ -194,17 +194,17 @@ public final class PalletScreen extends Screen {
 			for (Block b : palette) {
 				ids.add(BuiltInRegistries.BLOCK.getKey(b).toString());
 			}
-			entries.add(new PalletApplyPayload.Entry(BuiltInRegistries.BLOCK.getKey(r.block()).toString(), ids));
+			entries.add(new PaletteApplyPayload.Entry(BuiltInRegistries.BLOCK.getKey(r.block()).toString(), ids));
 		}
 		if (entries.isEmpty()) {
 			note = "Choose a palette for at least one block type first (the block alone does nothing).";
 			return;
 		}
-		if (!ClientPlayNetworking.canSend(PalletApplyPayload.TYPE)) {
+		if (!ClientPlayNetworking.canSend(PaletteApplyPayload.TYPE)) {
 			note = "The server does not have KhoaTools: cannot apply.";
 			return;
 		}
-		ClientPlayNetworking.send(new PalletApplyPayload(PalletClientFeature.min, PalletClientFeature.max, entries));
+		ClientPlayNetworking.send(new PaletteApplyPayload(PaletteClientFeature.min, PaletteClientFeature.max, entries));
 		onClose(); // selection and palettes stay
 	}
 
