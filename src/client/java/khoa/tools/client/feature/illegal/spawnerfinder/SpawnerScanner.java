@@ -6,13 +6,11 @@ import java.util.List;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.core.BlockPos;
-import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.Level;
 import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.entity.SpawnerBlockEntity;
 import net.minecraft.world.level.block.entity.TrialSpawnerBlockEntity;
-import net.minecraft.world.level.block.entity.trialspawner.TrialSpawner;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.status.ChunkStatus;
 
@@ -71,7 +69,7 @@ final class SpawnerScanner {
 						continue;
 					}
 					BlockPos pos = be.getBlockPos();
-					EntityType<?> type = mobOf(be, level, pos);
+					EntityType<?> type = SpawnerMobs.mobOf(be, level, pos);
 					String id = type == null ? "unknown" : SpawnerMobs.id(type);
 					out.add(new Info(pos.immutable(), type, id, trial, Math.sqrt(player.distSqr(pos))));
 				}
@@ -79,20 +77,5 @@ final class SpawnerScanner {
 		}
 		out.sort(Comparator.comparingDouble(Info::distance));
 		return List.copyOf(out);
-	}
-
-	private static EntityType<?> mobOf(BlockEntity be, Level level, BlockPos pos) {
-		try {
-			Entity display = null;
-			if (be instanceof SpawnerBlockEntity spawner) {
-				display = spawner.getSpawner().getOrCreateDisplayEntity(level, pos);
-			} else if (be instanceof TrialSpawnerBlockEntity trial) {
-				TrialSpawner ts = trial.getTrialSpawner();
-				display = ts.getStateData().getOrCreateDisplayEntity(ts, level, ts.getState());
-			}
-			return display == null ? null : display.getType();
-		} catch (RuntimeException e) {
-			return null; // spawner data not synced yet
-		}
 	}
 }

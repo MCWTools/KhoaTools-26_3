@@ -20,7 +20,11 @@ import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.gizmos.GizmoStyle;
 import net.minecraft.gizmos.Gizmos;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.level.block.Block;
+import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.VaultBlock;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -33,6 +37,8 @@ import khoa.tools.client.feature.KhoaFeature;
 import khoa.tools.client.feature.illegal.FaceRect;
 import khoa.tools.client.feature.illegal.FinderMode;
 import khoa.tools.client.feature.illegal.StarePath;
+import khoa.tools.client.feature.illegal.spawnerfinder.SpawnerMobs;
+import khoa.tools.client.gui.picker.PickData;
 import khoa.tools.client.gui.picker.PickFilter;
 import khoa.tools.setting.Setting;
 
@@ -70,8 +76,34 @@ public final class BlockFinderFeature implements KhoaFeature {
 
 	private static volatile Result result = Result.EMPTY;
 
-	private static List<String> blocksSource;
-	private static Set<Block> blockSet = Set.of();
+	/**
+	 * What is picked: whole blocks, plus variants (mob ids of spawners / trial spawners, vault types).
+	 * {@code candidates} = every block that can match, for the quick section test.
+	 */
+	private record Wanted(Set<Block> blocks, Set<String> spawnerMobs, Set<String> trialMobs, Set<String> vaults, Set<Block> candidates) {
+		static final Wanted NONE = new Wanted(Set.of(), Set.of(), Set.of(), Set.of(), Set.of());
+
+		/** The block entity is only looked up when a spawner variant has to be checked. */
+		boolean matches(BlockState state, LevelChunk chunk, BlockPos pos) {
+			Block block = state.getBlock();
+			if (blocks.contains(block)) {
+				return true;
+			}
+			if (!candidates.contains(block)) {
+				return false;
+			}
+			if (block == Blocks.VAULT) {
+				return vaults.contains(state.getValue(VaultBlock.OMINOUS) ? PickData.VAULT_OMINOUS : PickData.VAULT_NORMAL);
+			}
+			Set<String> mobs = block == Blocks.SPAWNER ? spawnerMobs : trialMobs;
+			BlockEntity be = chunk.getBlockEntity(pos);
+			EntityType<?> type = be == null ? null : SpawnerMobs.mobOf(be, chunk.getLevel(), pos);
+			return type != null && mobs.contains(SpawnerMobs.id(type));
+		}
+	}
+
+	private static List<String> wantedSource;
+	private static Wanted wantedCache = Wanted.NONE;
 
 	private static final StarePath PATH = new StarePath("Block", () -> on && pathfinding(), BlockFinderFeature::stareSeconds,
 		() -> result.positions(), pos -> {
@@ -118,7 +150,10 @@ public final class BlockFinderFeature implements KhoaFeature {
 	@Override
 	public List<Setting> settings() {
 		return List.of(
-			PICKED.setting("Blocks to find", "Blocks that get an overlay. Empty = nothing is shown.", List.of("block")),
+			PICKED.setting("Blocks to find", "Blocks that get an overlay. Spawner / Trial Spawner can be picked per mob and Vault as normal or ominous; "
+				+ "the plain block card matches all of them. Empty = nothing is shown.", List.of(PickData.BLOCK, PickData.VARIANTS))
+				.pickerToggle("Vanilla mobs", "On: spawner cards only for the mobs vanilla has spawners for. Off: every mob in the game (for servers with custom spawners).",
+					BlockFinderFeature::vanillaPicker, v -> KhoaConfig.put(ID, "vanilla_picker", v)),
 			FinderMode.setting(ID),
 			KhoaKeybinds.setting(ID, "mode_key", "Mode key", "Press to switch Box / Lines / Box and Lines.", () -> {
 				FinderMode.cycle(ID);
@@ -147,6 +182,10 @@ public final class BlockFinderFeature implements KhoaFeature {
 				}
 				KhoaFeature.say(Minecraft.getInstance(), "Block Finder pathfinding: " + (now ? "on" : "off"));
 			}));
+	}
+
+	static boolean vanillaPicker() {
+		return KhoaConfig.getBool(ID, "vanilla_picker", true);
 	}
 
 	static int limit() {
@@ -214,21 +253,43 @@ public final class BlockFinderFeature implements KhoaFeature {
 		}
 	}
 
-	private static Set<Block> blocks() {
+	private static Wanted wanted() {
 		List<String> keys = PICKED.get();
-		if (keys != blocksSource) {
-			blocksSource = keys;
-			Set<Block> set = new HashSet<>();
+		if (keys != wantedSource) {
+			wantedSource = keys;
+			Set<Block> blocks = new HashSet<>();
+			Set<String> spawnerMobs = new HashSet<>();
+			Set<String> trialMobs = new HashSet<>();
+			Set<String> vaults = new HashSet<>();
 			for (String key : keys) {
 				int colon = key.indexOf(':');
-				Identifier id = Identifier.tryParse(colon < 0 ? key : key.substring(colon + 1));
-				if (id != null) {
-					BuiltInRegistries.BLOCK.getOptional(id).ifPresent(set::add);
+				String kind = colon < 0 ? PickData.BLOCK : key.substring(0, colon);
+				String value = key.substring(colon + 1);
+				switch (kind) {
+					case PickData.SPAWNER -> spawnerMobs.add(value);
+					case PickData.TRIAL -> trialMobs.add(value);
+					case PickData.VAULT -> vaults.add(value);
+					default -> {
+						Identifier id = Identifier.tryParse(value);
+						if (id != null) {
+							BuiltInRegistries.BLOCK.getOptional(id).ifPresent(blocks::add);
+						}
+					}
 				}
 			}
-			blockSet = set;
+			Set<Block> candidates = new HashSet<>(blocks);
+			if (!spawnerMobs.isEmpty()) {
+				candidates.add(Blocks.SPAWNER);
+			}
+			if (!trialMobs.isEmpty()) {
+				candidates.add(Blocks.TRIAL_SPAWNER);
+			}
+			if (!vaults.isEmpty()) {
+				candidates.add(Blocks.VAULT);
+			}
+			wantedCache = new Wanted(blocks, spawnerMobs, trialMobs, vaults, candidates);
 		}
-		return blockSet;
+		return wantedCache;
 	}
 
 	private record Hit(long pos, BlockState state, double distSq) {
@@ -236,11 +297,11 @@ public final class BlockFinderFeature implements KhoaFeature {
 
 	/** Nearest {@link #limit()} matching blocks within the scan radius (bounded max-heap), then their colours and merged outline edges. */
 	private static Result scan(ClientLevel level, BlockPos center) {
-		Set<Block> wanted = blocks();
-		if (wanted.isEmpty()) {
+		Wanted wanted = wanted();
+		if (wanted.candidates().isEmpty()) {
 			return Result.EMPTY;
 		}
-		Predicate<BlockState> test = s -> wanted.contains(s.getBlock());
+		Predicate<BlockState> test = s -> wanted.candidates().contains(s.getBlock());
 		int r = radius();
 		int limit = limit();
 		double rSq = (double) r * r;
@@ -264,7 +325,7 @@ public final class BlockFinderFeature implements KhoaFeature {
 						for (int lz = 0; lz < 16; lz++) {
 							for (int lx = 0; lx < 16; lx++) {
 								BlockState state = section.getBlockState(lx, ly, lz);
-								if (!wanted.contains(state.getBlock())) {
+								if (!test.test(state)) {
 									continue;
 								}
 								int x = (cx << 4) + lx;
@@ -274,7 +335,7 @@ public final class BlockFinderFeature implements KhoaFeature {
 								double dy = y + 0.5 - center.getY();
 								double dz = z + 0.5 - center.getZ();
 								double d = dx * dx + dy * dy + dz * dz;
-								if (d > rSq) {
+								if (d > rSq || !wanted.matches(state, chunk, m.set(x, y, z))) {
 									continue;
 								}
 								if (heap.size() < limit) {

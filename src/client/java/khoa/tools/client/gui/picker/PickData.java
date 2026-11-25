@@ -38,6 +38,13 @@ public final class PickData {
 	/** Entity picker (Mob Finder): any entity type, players and special entities included. Stored as "entity:minecraft:zombie". */
 	public static final String ENTITY = "entity";
 
+	/** Vault pickers: stored as "vault:normal" / "vault:ominous". */
+	public static final String VAULT = "vault";
+	/** Config row option (not a stored kind): a block picker that also lists spawner mobs and vault types. */
+	public static final String VARIANTS = "variants";
+	public static final String VAULT_NORMAL = "normal";
+	public static final String VAULT_OMINOUS = "ominous";
+
 	private PickData() {
 	}
 
@@ -59,6 +66,7 @@ public final class PickData {
 				case SPAWNER -> "Spawner";
 				case TRIAL -> "Trial spawner";
 				case ENTITY -> "Entity";
+				case VAULT -> "Vault";
 				default -> "Item";
 			};
 			return List.of(Component.literal(name), Component.literal(id).withStyle(ChatFormatting.GRAY),
@@ -105,6 +113,35 @@ public final class PickData {
 			out.add(spawnerEntry(TRIAL, type));
 		}
 		return out;
+	}
+
+	/**
+	 * The block list with variant cards right after their generic block: one card per mob after Spawner and Trial Spawner,
+	 * normal / ominous after Vault. The generic card still matches every variant. Needs a world.
+	 */
+	public static List<Entry> blockVariantCatalog(boolean vanillaOnly) {
+		List<Entry> out = new ArrayList<>();
+		List<EntityType<?>> mobs = vanillaOnly ? SpawnerMobs.vanilla() : SpawnerMobs.all();
+		for (Entry e : list(BLOCK)) {
+			out.add(e);
+			switch (e.id()) {
+				case "minecraft:spawner" -> mobs.forEach(type -> out.add(spawnerEntry(SPAWNER, type)));
+				case "minecraft:trial_spawner" -> mobs.forEach(type -> out.add(spawnerEntry(TRIAL, type)));
+				case "minecraft:vault" -> {
+					out.add(vaultEntry(VAULT_NORMAL));
+					out.add(vaultEntry(VAULT_OMINOUS));
+				}
+				default -> {
+				}
+			}
+		}
+		return out;
+	}
+
+	private static Entry vaultEntry(String type) {
+		String name = VAULT_OMINOUS.equals(type) ? "Ominous Vault" : "Normal Vault";
+		ItemStack icon = available() ? new ItemStack(Items.VAULT) : ItemStack.EMPTY;
+		return new Entry(key(VAULT, type), VAULT, type, icon, name, (name + " minecraft:vault").toLowerCase(Locale.ROOT), 0);
 	}
 
 	/** Picker list for entities: every registered entity type (players, items, armor stands... included). Needs no world. */
@@ -186,6 +223,9 @@ public final class PickData {
 			String sid = key.substring(sc + 1);
 			EntityType<?> type = SpawnerMobs.byId(sid);
 			return type != null ? spawnerEntry(sk, type) : spawnerEntry(sk, sid, sid, SpawnerMobs.colorOf(sid));
+		}
+		if (sk.equals(VAULT)) {
+			return vaultEntry(key.substring(sc + 1));
 		}
 		if (!available()) {
 			int c = key.indexOf(':');

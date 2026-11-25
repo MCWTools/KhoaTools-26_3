@@ -216,3 +216,8 @@
 - With any option on, `Minecraft.pick` is replaced by `FreecamReach.cameraAim`: selection box, breaking, placing, using, entity attack and the Auto Clicker follow the camera ray, limited to the player's reach. A target the player cannot see needs the option of its type. Crosshair drawn in the HUD in this mode.
 - Known limits: placed block orientation and items with their own look ray (buckets, boats) still follow the player's head.
 - Verified: build OK; `runClient -Pfreecamtest` 40/40 singleplayer, screenshot inspected. Not verified: multiplayer / anti cheat.
+
+## Block Finder variants (2026-11-25)
+- Block Finder picker lists variants after the generic card: one card per mob for Spawner and Trial Spawner (tick box "Vanilla mobs", default on), Normal / Ominous Vault. Keys "spawner:<mob>", "trial:<mob>", "vault:normal|ominous"; the generic block card still matches all. Option PickData.VARIANTS enables this, other block pickers are unchanged.
+- SpawnerMobs.mobOf (moved from SpawnerScanner) reads the trial spawner's synced spawn_data first, so Spawner Finder also benefits when no mob is spinning.
+- Verified: temporary in-game self test (mob / vault filters, picker screenshots), then removed; `gradlew build`. Not verified: multiplayer server data.

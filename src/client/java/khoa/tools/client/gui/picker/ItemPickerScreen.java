@@ -131,7 +131,9 @@ public final class ItemPickerScreen extends Screen {
 			return List.of(); // not cached: the real list is built after joining a world
 		}
 		if (catalogCache == null) {
-			catalogCache = PickData.catalog(mode);
+			catalogCache = PickData.BLOCK.equals(mode) && setting.options.contains(PickData.VARIANTS)
+				? PickData.blockVariantCatalog(setting.getPickerToggle())
+				: PickData.catalog(mode);
 		}
 		return catalogCache;
 	}
@@ -467,6 +469,11 @@ public final class ItemPickerScreen extends Screen {
 				SpawnerLook.drawIcon(g, x + 4, y + (CARD_H - 16) / 2, 16, PickData.TRIAL.equals(e.kind()), e.swatch());
 			} else {
 				g.item(e.stack(), x + 4, y + (CARD_H - 16) / 2);
+				if (PickData.VAULT.equals(e.kind())) { // both vaults share one item model: a corner mark tells them apart
+					int mark = PickData.VAULT_OMINOUS.equals(e.id()) ? 0xFF38D6E8 : 0xFFFFA030;
+					g.fill(x + 3, y + 2, x + 10, y + 9, SpawnerLook.OUTLINE);
+					g.fill(x + 4, y + 3, x + 9, y + 8, mark);
+				}
 			}
 			int textW = cw - 28 - (chosenSide ? 10 : 0);
 			g.text(this.font, this.font.plainSubstrByWidth(e.name(), textW), x + 24, y + (CARD_H - 8) / 2, COL_TEXT);

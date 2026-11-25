@@ -5,12 +5,19 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 
+import net.minecraft.core.BlockPos;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.resources.Identifier;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntityType;
 import net.minecraft.world.entity.EntityTypes;
 import net.minecraft.world.entity.MobCategory;
 import net.minecraft.world.item.SpawnEggItem;
+import net.minecraft.world.level.Level;
+import net.minecraft.world.level.block.entity.BlockEntity;
+import net.minecraft.world.level.block.entity.SpawnerBlockEntity;
+import net.minecraft.world.level.block.entity.TrialSpawnerBlockEntity;
+import net.minecraft.world.level.block.entity.trialspawner.TrialSpawner;
 
 /** Which mobs a spawner can hold: the vanilla ones, or every mob in the registry (custom spawners on servers), plus their colours. */
 public final class SpawnerMobs {
@@ -48,6 +55,31 @@ public final class SpawnerMobs {
 			all = list;
 		}
 		return all;
+	}
+
+	/**
+	 * The mob inside a (trial) spawner as far as the client knows it, or null. A trial spawner only has a spinning mob in some states,
+	 * so its synced spawn data is read first.
+	 */
+	public static EntityType<?> mobOf(BlockEntity be, Level level, BlockPos pos) {
+		try {
+			Entity display = null;
+			if (be instanceof SpawnerBlockEntity spawner) {
+				display = spawner.getSpawner().getOrCreateDisplayEntity(level, pos);
+			} else if (be instanceof TrialSpawnerBlockEntity trial) {
+				TrialSpawner ts = trial.getTrialSpawner();
+				String synced = ts.getStateData().getUpdateTag(ts.getState())
+					.getCompoundOrEmpty("spawn_data").getCompoundOrEmpty("entity").getStringOr("id", "");
+				EntityType<?> type = synced.isEmpty() ? null : byId(synced);
+				if (type != null) {
+					return type;
+				}
+				display = ts.getStateData().getOrCreateDisplayEntity(ts, level, ts.getState());
+			}
+			return display == null ? null : display.getType();
+		} catch (RuntimeException e) {
+			return null; // spawner data not synced yet
+		}
 	}
 
 	public static String id(EntityType<?> type) {
