@@ -1,9 +1,23 @@
 package khoa.tools.client.feature.camera;
 
+import java.util.function.Predicate;
+
+import com.mojang.blaze3d.platform.InputConstants;
+
+import net.minecraft.client.CameraType;
+import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.world.phys.Vec3;
 
-/** Runtime state of "watching" a saved camera: the view is detached to the camera's spot while the player stays frozen. */
+import khoa.tools.client.config.KhoaConfig;
+import khoa.tools.client.mixin.KeyMappingKeyAccessor;
+
+/**
+ * Runtime state of the detached view: "watching" a saved camera, or Freecam. In both the player stays frozen.
+ * Freecam only moves the render camera: the player keeps its own aim, so attacking / using (also by the Auto Clicker) still
+ * happens where the player's head looks.
+ */
 public final class CameraWatch {
 	private static boolean watching;
 	private static boolean fromKey;
@@ -13,9 +27,19 @@ public final class CameraWatch {
 	private static float yaw;
 	private static float pitch;
 	private static boolean free;
-	private static double speedH = khoa.tools.client.config.KhoaConfig.getInt("camera", "freecamSpeedH", 10);
-	private static double speedV = khoa.tools.client.config.KhoaConfig.getInt("camera", "freecamSpeedV", 10);
+	/** The defaults are the values saved by the older freecam inside the Camera feature. */
+	private static int speedH = KhoaConfig.getInt("freecam", "speed_h", KhoaConfig.getInt("camera", "freecamSpeedH", 10));
+	private static int speedV = KhoaConfig.getInt("freecam", "speed_v", KhoaConfig.getInt("camera", "freecamSpeedV", 10));
 	private static long lastNanos;
+	/** How freecam reads a movement key. Replaced only by the in-process self test. */
+	public static Predicate<KeyMapping> keyReader = CameraWatch::physicallyDown;
+	/** The player that started freecam (a respawn / dimension change creates a new one). */
+	private static LocalPlayer freePlayer;
+	private static CameraType previousCameraType;
+	private static boolean keepShift;
+	private static boolean toggleStateSaved;
+	private static boolean sneakToggled;
+	private static boolean sprintToggled;
 
 	private CameraWatch() {
 	}
@@ -45,7 +69,7 @@ public final class CameraWatch {
 	}
 
 	public static void start(Minecraft mc, CameraStore.Cam cam, boolean viaKey) {
-		free = false;
+		stop();
 		watching = true;
 		fromKey = viaKey;
 		name = cam.name;
@@ -55,17 +79,29 @@ public final class CameraWatch {
 		pitch = cam.pitch;
 	}
 
-	/** Freecam: the view starts at the current camera and flies with WASD / jump / sneak; the player stays frozen. */
+	/**
+	 * Freecam: the view starts at the current camera and flies with the movement keys; the player stays frozen. A player that
+	 * is sneaking stays sneaking (except while flying, where holding sneak would make it sink).
+	 */
 	public static void startFree(Minecraft mc) {
+		stop();
+		LocalPlayer player = mc.player;
+		if (player == null) return;
 		net.minecraft.client.Camera cam = mc.gameRenderer.mainCamera();
+		pos = cam.position();
+		yaw = cam.yRot();
+		pitch = cam.xRot();
+		keepShift = player.input.keyPresses.shift() && !player.getAbilities().flying;
+		freePlayer = player;
+		toggleStateSaved = false;
+		// third person: the own model is drawn, the first person hand / crosshair / screen overlays are not
+		previousCameraType = mc.options.getCameraType();
+		mc.options.setCameraType(CameraType.THIRD_PERSON_BACK);
 		watching = true;
 		fromKey = false;
 		free = true;
 		name = "Freecam";
 		worldKey = CameraStore.worldKey(mc);
-		pos = cam.position();
-		yaw = cam.yRot();
-		pitch = cam.xRot();
 		lastNanos = System.nanoTime();
 	}
 
@@ -73,64 +109,120 @@ public final class CameraWatch {
 		return watching && free;
 	}
 
+	/** True when the frozen player has to keep sneaking (never while only watching a saved camera). */
+	public static boolean keepShift() {
+		return isFree() && keepShift;
+	}
+
 	public static int speedH() {
-		return (int) Math.round(speedH);
+		return speedH;
 	}
 
 	public static int speedV() {
-		return (int) Math.round(speedV);
+		return speedV;
 	}
 
 	/** Slider / config setters (blocks per second, 1..100). */
 	public static void setSpeedH(int value) {
 		speedH = Math.max(1, Math.min(100, value));
-		khoa.tools.client.config.KhoaConfig.put("camera", "freecamSpeedH", (int) speedH);
+		KhoaConfig.put("freecam", "speed_h", speedH);
 	}
 
 	public static void setSpeedV(int value) {
 		speedV = Math.max(1, Math.min(100, value));
-		khoa.tools.client.config.KhoaConfig.put("camera", "freecamSpeedV", (int) speedV);
+		KhoaConfig.put("freecam", "speed_v", speedV);
 	}
 
-	/** Mouse wheel while in freecam: both speeds faster / slower (saved, so the sliders follow). */
+	/** Mouse wheel while in freecam: both speeds faster / slower by at least 1 (saved, so the sliders follow). */
 	public static void scroll(double amount) {
-		double f = Math.pow(1.15, amount);
-		setSpeedH((int) Math.round(Math.max(1.0, Math.min(100.0, speedH * f))));
-		setSpeedV((int) Math.round(Math.max(1.0, Math.min(100.0, speedV * f))));
+		if (amount == 0) return;
+		setSpeedH(scaled(speedH, amount));
+		setSpeedV(scaled(speedV, amount));
 	}
 
-	/** Once per rendered frame: moves the freecam by the held movement keys, kept inside the render distance of the player. */
+	private static int scaled(int speed, double amount) {
+		int next = (int) Math.round(Math.max(1.0, Math.min(100.0, speed * Math.pow(1.15, amount))));
+		return next != speed ? next : speed + (amount > 0 ? 1 : -1);
+	}
+
+	/**
+	 * The key as it is held on the keyboard, so "toggle sneak" or the Sneak feature (which keep the sneak mapping down)
+	 * do not make the camera sink forever. Mouse bound keys use the mapping state.
+	 */
+	private static boolean physicallyDown(KeyMapping mapping) {
+		InputConstants.Key key = ((KeyMappingKeyAccessor) mapping).khoa$getKey();
+		if (key.getType() == InputConstants.Type.KEYBOARD && key.getValue() != InputConstants.UNKNOWN.getValue()) {
+			return InputConstants.isKeyDown(key.getValue());
+		}
+		return mapping.isDown();
+	}
+
+	/**
+	 * Once per rendered frame: moves the freecam without any acceleration. Forward / back / strafe go along the camera's yaw on
+	 * the horizontal plane (looking up or down never tilts the movement), jump / sneak go straight up / down.
+	 */
 	public static void frame(Minecraft mc) {
 		long now = System.nanoTime();
 		double dt = Math.min(0.1, (now - lastNanos) / 1.0e9);
 		lastNanos = now;
-		if (!isFree() || mc.player == null || mc.level == null || mc.gui.screen() != null) return;
-		double forward = (mc.options.keyUp.isDown() ? 1 : 0) - (mc.options.keyDown.isDown() ? 1 : 0);
-		double side = (mc.options.keyLeft.isDown() ? 1 : 0) - (mc.options.keyRight.isDown() ? 1 : 0);
-		double up = (mc.options.keyJump.isDown() ? 1 : 0) - (mc.options.keyShift.isDown() ? 1 : 0);
+		if (!isFree() || mc.player == null || mc.level == null) return;
+		// F5 must not bring the first person hand back
+		if (mc.options.getCameraType() != CameraType.THIRD_PERSON_BACK) mc.options.setCameraType(CameraType.THIRD_PERSON_BACK);
+		if (mc.gui.screen() != null) return;
+		if (!toggleStateSaved) {
+			toggleStateSaved = true;
+			sneakToggled = mc.options.keyShift.isDown();
+			sprintToggled = mc.options.keySprint.isDown();
+		}
+		double forward = held(mc.options.keyUp) - held(mc.options.keyDown);
+		double side = held(mc.options.keyLeft) - held(mc.options.keyRight);
+		double up = held(mc.options.keyJump) - held(mc.options.keyShift);
+		double length = Math.hypot(forward, side);
+		if (length > 1) {
+			forward /= length;
+			side /= length;
+		}
 		double yawRad = Math.toRadians(yaw);
 		double fx = -Math.sin(yawRad);
 		double fz = Math.cos(yawRad);
 		double dx = fx * forward + fz * side;
 		double dz = fz * forward - fx * side;
 		double stepH = speedH * dt;
-		double stepV = speedV * dt;
+		// the client only has the chunks around the player, so there is nothing to see further away
 		double max = Math.max(1, mc.options.getEffectiveRenderDistance() - 1) * 16.0;
 		double nx = Math.max(mc.player.getX() - max, Math.min(mc.player.getX() + max, pos.x + dx * stepH));
 		double nz = Math.max(mc.player.getZ() - max, Math.min(mc.player.getZ() + max, pos.z + dz * stepH));
-		double ny = Math.max(mc.level.getMinY(), Math.min(mc.level.getMaxY(), pos.y + up * stepV));
-		pos = new Vec3(nx, ny, nz);
+		pos = new Vec3(nx, pos.y + up * speedV * dt, nz);
+	}
+
+	private static int held(KeyMapping mapping) {
+		return keyReader.test(mapping) ? 1 : 0;
 	}
 
 	public static void stop() {
+		if (free) {
+			Minecraft mc = Minecraft.getInstance();
+			if (previousCameraType != null) mc.options.setCameraType(previousCameraType);
+			if (toggleStateSaved) {
+				// undo sneak / sprint presses that only flew the camera ("toggle" options flip on every press)
+				restoreToggle(mc.options.keyShift, mc.options.toggleCrouch().get(), sneakToggled);
+				restoreToggle(mc.options.keySprint, mc.options.toggleSprint().get(), sprintToggled);
+			}
+			freePlayer = null;
+		}
 		watching = false;
 		fromKey = false;
 		free = false;
 	}
 
+	private static void restoreToggle(KeyMapping key, boolean toggleMode, boolean wanted) {
+		if (toggleMode && key.isDown() != wanted) key.setDown(true);
+	}
+
 	/** Called every tick: ends the watch when the world / dimension changed. */
 	public static void validate(Minecraft mc) {
-		if (watching && (mc.level == null || !java.util.Objects.equals(worldKey, CameraStore.worldKey(mc)))) {
+		if (watching && (mc.level == null || !java.util.Objects.equals(worldKey, CameraStore.worldKey(mc))
+			|| (free && (mc.player != freePlayer || !mc.player.isAlive())))) {
 			stop();
 		}
 	}

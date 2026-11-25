@@ -48,8 +48,6 @@ public final class CameraFeature implements KhoaFeature {
 	private static boolean rotateable = KhoaConfig.getBool("camera", "rotateable", false);
 	private static String selected;
 	private static KeyMapping watchKey;
-	private static KeyMapping freecamKey;
-	private static boolean freecamWasDown;
 
 	public static boolean rotateable() {
 		return rotateable;
@@ -58,7 +56,7 @@ public final class CameraFeature implements KhoaFeature {
 	@Override public String id() { return "camera"; }
 	@Override public String displayName() { return "Camera"; }
 	@Override public String description() {
-		return "Saved camera points (per server and dimension). Commands: /khoatoolsclient camera create <name> | changelocation <name> | select <name> | watch <name> | freecam | stopwatch | rotateable [true|false] | list | delete <name>. "
+		return "Saved camera points (per server and dimension). Commands: /khoatoolsclient camera create <name> | changelocation <name> | select <name> | watch <name> | stopwatch | rotateable [true|false] | list | delete <name>. "
 			+ "'create' saves your current camera position and rotation (a marker shows where it is); 'select' only picks it; 'watch' moves your view there (only inside render distance) and freezes your movement; 'stopwatch' returns. "
 			+ "Hold the 'Watch cam' key (Controls > KhoaTools) to watch the selected camera and release it to return. Clicking the card turns the whole feature on/off.";
 	}
@@ -86,12 +84,11 @@ public final class CameraFeature implements KhoaFeature {
 	private static void setEnabled(boolean value) {
 		enabled = value;
 		KhoaConfig.put("camera", "enabled", value);
-		if (!value) CameraWatch.stop();
+		if (!value && !CameraWatch.isFree()) CameraWatch.stop();
 	}
 
 	@Override public void onInit() {
 		watchKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.khoatools.camera_watch", InputConstants.Type.KEYBOARD, InputConstants.UNKNOWN.getValue(), KeyCategory.get()));
-		freecamKey = KeyMappingHelper.registerKeyMapping(new KeyMapping("key.khoatools.freecam", InputConstants.Type.KEYBOARD, InputConstants.UNKNOWN.getValue(), KeyCategory.get()));
 		ClientTickEvents.END_CLIENT_TICK.register(CameraFeature::tick);
 		ClientPlayConnectionEvents.DISCONNECT.register((handler, client) -> {
 			CameraWatch.stop();
@@ -103,10 +100,7 @@ public final class CameraFeature implements KhoaFeature {
 
 	private static void tick(Minecraft mc) {
 		CameraWatch.validate(mc);
-		if (!usable() && CameraWatch.isWatching()) CameraWatch.stop();
-		boolean fcDown = freecamKey != null && freecamKey.isDown() && mc.gui.screen() == null;
-		if (fcDown && !freecamWasDown) toggleFreecam(mc);
-		freecamWasDown = fcDown;
+		if (!usable() && CameraWatch.isWatching() && !CameraWatch.isFree()) CameraWatch.stop();
 		boolean down = watchKey != null && watchKey.isDown() && mc.gui.screen() == null;
 		if (down && !CameraWatch.isWatching() && usable() && mc.player != null) {
 			CameraStore.Cam cam = selected == null ? null : CameraStore.find(mc, selected);
@@ -119,18 +113,6 @@ public final class CameraFeature implements KhoaFeature {
 			}
 		} else if (!down && CameraWatch.isFromKey()) {
 			CameraWatch.stop();
-		}
-	}
-
-	private static void toggleFreecam(Minecraft mc) {
-		if (CameraWatch.isFree()) {
-			CameraWatch.stop();
-			KhoaFeature.say(mc, "[Camera] Freecam off.");
-		} else if (!usable()) {
-			KhoaFeature.say(mc, "[Camera] The camera feature is off. Run /khoatoolsclient camera to turn it on.");
-		} else if (mc.player != null) {
-			CameraWatch.startFree(mc);
-			KhoaFeature.say(mc, "[Camera] Freecam on: WASD/jump/sneak to fly, mouse wheel = speed, no block interaction.");
 		}
 	}
 
@@ -152,11 +134,7 @@ public final class CameraFeature implements KhoaFeature {
 
 	private static void renderHud(GuiGraphicsExtractor g, DeltaTracker delta) {
 		Minecraft mc = Minecraft.getInstance();
-		if (!CameraWatch.isWatching() || mc.level == null || mc.gui.hud.isHidden()) return;
-		if (CameraWatch.isFree()) {
-			g.text(mc.font, String.format("Freecam  speed H %d  V %d (mouse wheel)", CameraWatch.speedH(), CameraWatch.speedV()), 10, 10, 0xFFFFFFFF);
-			return;
-		}
+		if (!CameraWatch.isWatching() || CameraWatch.isFree() || mc.level == null || mc.gui.hud.isHidden()) return;
 		long t = mc.level.getOverworldClockTime();
 		long day = Math.floorDiv(t, 24000L) + 1;
 		long inDay = Math.floorMod(t, 24000L);
@@ -220,10 +198,6 @@ public final class CameraFeature implements KhoaFeature {
 					CameraWatch.start(mc, cam, false);
 					return reply(mc, null, "Watching '" + cam.name + "'. Movement is frozen; use stopwatch to return.");
 				})))
-			.then(ClientCommands.literal("freecam").executes(ctx -> {
-				toggleFreecam(ctx.getSource().getClient());
-				return 1;
-			}))
 			.then(ClientCommands.literal("stopwatch").executes(ctx -> {
 				Minecraft mc = ctx.getSource().getClient();
 				if (!CameraWatch.isWatching()) return reply(mc, "You are not watching a camera.", "");

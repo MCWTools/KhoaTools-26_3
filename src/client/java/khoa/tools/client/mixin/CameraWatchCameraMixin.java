@@ -7,6 +7,9 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import net.minecraft.client.Camera;
+import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.renderer.state.level.CameraRenderState;
+import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.Vec3;
 
 import khoa.tools.client.feature.camera.CameraWatch;
@@ -27,5 +30,14 @@ public abstract class CameraWatchCameraMixin {
 		this.detached = true;
 		this.setRotation(CameraWatch.yaw(), CameraWatch.pitch());
 		this.setPosition(CameraWatch.pos());
+	}
+
+	/** Same as spectators: with the freecam inside a solid block, occlusion culling would hide the world. */
+	@Inject(method = "extractRenderState", at = @At("TAIL"))
+	private void khoatools$freecamCulling(CameraRenderState cameraState, DeltaTracker deltaTracker, CallbackInfo ci) {
+		net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+		if (CameraWatch.isFree() && mc.level != null && mc.level.getBlockState(BlockPos.containing(CameraWatch.pos())).isSolidRender()) {
+			cameraState.smartCull = false;
+		}
 	}
 }

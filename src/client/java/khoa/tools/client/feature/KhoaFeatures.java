@@ -96,6 +96,7 @@ public final class KhoaFeatures {
 		new ItemComponentReaderFeature(),
 		new CustomItemTabFeature(),
 		new CameraFeature(),
+		new khoa.tools.client.feature.freecam.FreecamFeature(),
 		new FakePlayerFeature(),
 		new SpawnerFinderFeature(),
 		new BlockFinderFeature(),

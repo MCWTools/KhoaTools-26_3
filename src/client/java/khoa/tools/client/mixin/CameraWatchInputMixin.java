@@ -11,14 +11,14 @@ import net.minecraft.world.phys.Vec2;
 
 import khoa.tools.client.feature.camera.CameraWatch;
 
-/** Freezes player movement (walk, jump, sneak, sprint) while watching a saved camera. */
+/** Freezes player movement (walk, jump, sneak, sprint) while watching a saved camera or in freecam. Freecam keeps an existing sneak. */
 @Mixin(KeyboardInput.class)
 public abstract class CameraWatchInputMixin {
 	@Inject(method = "tick", at = @At("TAIL"))
 	private void khoatools$freeze(CallbackInfo ci) {
 		if (CameraWatch.isWatching()) {
 			KeyboardInput self = (KeyboardInput) (Object) this;
-			self.keyPresses = Input.EMPTY;
+			self.keyPresses = CameraWatch.keepShift() ? new Input(false, false, false, false, false, true, false) : Input.EMPTY;
 			((ClientInputAccessor) self).khoatools$setMoveVector(Vec2.ZERO);
 		}
 	}

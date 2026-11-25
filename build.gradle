@@ -29,6 +29,15 @@ loom {
 			}
 		}
 	}
+	// ./gradlew runClient -Pfreecamtest : same, runs the Freecam self test (FreecamSelfTest)
+	if (project.hasProperty('freecamtest')) {
+		runs {
+			client {
+				vmArg "-Dkhoatools.freecamtest=true"
+				programArgs "--quickPlaySingleplayer", "New World"
+			}
+		}
+	}
 	if (project.hasProperty('autotest')) {
 		runs {
 			client {

@@ -202,3 +202,11 @@
 - Server keeps an undo history per player and selection box (max 32 applies / 8M stored blocks; an apply on another box starts a new history, disconnect clears it): PaletteUndoPayload (C2S) and PaletteStatePayload (S2C, undo depth after every apply/undo). The client shows "Undo (n)" only while depth > 0, a new selection resets it, Undo can be pressed repeatedly, shift + right click never changes the selection, the open screen rescans its block list after apply/undo.
 - Found by the self test: a pausing Screen froze the integrated server so Undo's block changes never reached the client; PaletteScreen now has isPauseScreen() = false.
 - Verified: build OK, `runClient -Ppalettetest` 26/26 (undo once, apply twice then undo twice restores all 33 bricks, list refreshed 4 -> 2 types). NOT verified: dedicated server, other players on the same server.
+
+## 2026-11-25: Freecam card (own feature, replaces the freecam inside Camera)
+- New card `freecam` (`feature/freecam/FreecamFeature`, `FreecamReach`; flying state stays in `camera/CameraWatch`). Command `/khoatoolsclient freecam`, Controls key "Freecam" (same key id as before). `/khoatoolsclient camera freecam` was removed. Not in the cheat list, works with cheat off.
+- Horizontal / vertical speed sliders (old camera.freecamSpeedH/V values are the defaults), mouse wheel scales both. No acceleration, WASD follows camera yaw only, jump / sneak move along world Y, kept within render distance horizontally.
+- A sneaking player stays sneaking (not while flying). Sneak / sprint presses in freecam do not reach the player. The player keeps its aim, so manual clicks and the Auto Clicker act where the head looks (the old attack / use block mixin is gone).
+- Third person camera type while on (own model visible, no hand / crosshair), own name tag drawn (`FreecamNameTagMixin`).
+- "Interact with entity through wall" / "Interact with block through wall": default off, rows exist and work only with cheat true and freecam on. Block option affects right click only (block entity or a class overriding useWithoutItem / useItemOn).
+- Verified: `gradlew build` OK; `gradlew runClient -Pfreecamtest --offline` 29/29 in singleplayer, two screenshots inspected. NOT verified: real keyboard input (the test replaces the key reader), multiplayer / anti cheat, Sodium.
