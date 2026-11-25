@@ -210,3 +210,9 @@
 - Third person camera type while on (own model visible, no hand / crosshair), own name tag drawn (`FreecamNameTagMixin`).
 - "Interact with entity through wall" / "Interact with block through wall": default off, rows exist and work only with cheat true and freecam on. Block option affects right click only (block entity or a class overriding useWithoutItem / useItemOn).
 - Verified: `gradlew build` OK; `gradlew runClient -Pfreecamtest --offline` 29/29 in singleplayer, two screenshots inspected. NOT verified: real keyboard input (the test replaces the key reader), multiplayer / anti cheat, Sodium.
+
+### Freecam aim modes (2026-11-25, later; replaces the through-wall behaviour above)
+- Khoa's rule: the through wall options aim with the CAMERA. Rows (cheat true only): "Use player head aim" (derived: on exactly while both options are off; turning it off turns both on), "Interact with entity through wall", "Interact with block through wall".
+- With any option on, `Minecraft.pick` is replaced by `FreecamReach.cameraAim`: selection box, breaking, placing, using, entity attack and the Auto Clicker follow the camera ray, limited to the player's reach. A target the player cannot see needs the option of its type. Crosshair drawn in the HUD in this mode.
+- Known limits: placed block orientation and items with their own look ray (buckets, boats) still follow the player's head.
+- Verified: build OK; `runClient -Pfreecamtest` 40/40 singleplayer, screenshot inspected. Not verified: multiplayer / anti cheat.

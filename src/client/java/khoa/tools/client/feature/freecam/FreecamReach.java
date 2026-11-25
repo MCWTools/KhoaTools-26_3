@@ -1,76 +1,88 @@
 package khoa.tools.client.feature.freecam;
 
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.entity.Entity;
 import net.minecraft.world.entity.EntitySelector;
 import net.minecraft.world.entity.projectile.ProjectileUtil;
 import net.minecraft.world.level.BlockGetter;
-import net.minecraft.world.level.block.Block;
-import net.minecraft.world.level.block.state.BlockBehaviour;
+import net.minecraft.world.level.ClipContext;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.AABB;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 import net.minecraft.world.phys.shapes.CollisionContext;
 
-/** Ray casts of the two "through wall" options. They start at the player's eyes and keep the vanilla reach. */
-public final class FreecamReach {
-	private static final Map<Class<?>, Boolean> USABLE = new ConcurrentHashMap<>();
+import khoa.tools.client.feature.camera.CameraWatch;
 
+/**
+ * The target of the freecam's aim, used instead of the player's aim while a "through wall" option is on.
+ * The ray starts at the camera; the target still has to be inside the player's normal reach (the server checks that).
+ * A target the player cannot see from its eyes counts as "through wall" and needs the option of its type.
+ */
+public final class FreecamReach {
 	private FreecamReach() {
 	}
 
-	/** The nearest entity on the player's aim inside entity reach, ignoring blocks. Null when the option is off or nothing is there. */
-	public static EntityHitResult entity(Minecraft mc, float partialTicks) {
+	/** What the camera aims at. A miss when there is nothing, it is out of reach, or it is hidden and its option is off. */
+	public static HitResult cameraAim(Minecraft mc, float partialTicks) {
 		LocalPlayer player = mc.player;
-		if (!FreecamFeature.entityThroughWall() || player == null || mc.level == null || player.isSpectator()) return null;
-		double range = player.entityInteractionRange();
-		Vec3 from = player.getEyePosition(partialTicks);
-		Vec3 direction = player.getViewVector(partialTicks);
-		Vec3 to = from.add(direction.scale(range));
-		AABB box = player.getBoundingBox().expandTowards(direction.scale(range)).inflate(1.0);
-		EntityHitResult hit = ProjectileUtil.getEntityHitResult(player, from, to, box, EntitySelector.CAN_BE_PICKED, range * range);
-		return hit != null && hit.getLocation().closerThan(from, range) ? hit : null;
+		Vec3 eye = player.getEyePosition(partialTicks);
+		Vec3 from = CameraWatch.pos();
+		Vec3 direction = Vec3.directionFromRotation(CameraWatch.pitch(), CameraWatch.yaw());
+		double reach = Math.max(player.blockInteractionRange(), player.entityInteractionRange());
+		// far enough to cover everything the player can reach, however far away the camera is
+		Vec3 to = from.add(direction.scale(from.distanceTo(eye) + reach + 8.0));
+
+		BlockHitResult block = firstBlock(mc, from, to);
+		Vec3 end = block == null ? to : block.getLocation();
+		EntityHitResult entity = ProjectileUtil.getEntityHitResult(player, from, end, new AABB(from, end).inflate(1.0),
+			EntitySelector.CAN_BE_PICKED, from.distanceToSqr(end));
+
+		if (entity != null) {
+			Entity target = entity.getEntity();
+			boolean allowed = player.isWithinEntityInteractionRange(target, 0.0)
+				&& (FreecamFeature.entityThroughWall() || playerSees(mc, eye, entity.getLocation(), null)
+					|| playerSees(mc, eye, target.getBoundingBox().getCenter(), null));
+			return allowed ? entity : miss(from, entity.getLocation());
+		}
+		if (block != null) {
+			boolean allowed = player.isWithinBlockInteractionRange(block.getBlockPos(), 0.0)
+				&& (FreecamFeature.blockThroughWall() || playerSees(mc, eye, block.getLocation(), block));
+			return allowed ? block : miss(from, block.getLocation());
+		}
+		return miss(from, to);
 	}
 
 	/**
-	 * The first block on the player's aim inside block reach that reacts to a right click (chest, door, lever, button,
-	 * crafting table...), skipping every plain block in front of it. Null when the option is off, when you sneak with an item
-	 * (vanilla then places / uses the item instead) or when there is no such block.
+	 * First block outline on the camera ray. A block the camera is inside of is skipped, so a camera flying through a wall
+	 * targets what is in front of it.
 	 */
-	public static BlockHitResult block(Minecraft mc) {
-		LocalPlayer player = mc.player;
-		if (!FreecamFeature.blockThroughWall() || player == null || mc.level == null || player.isSpectator()) return null;
-		if (player.isSecondaryUseActive() && (!player.getMainHandItem().isEmpty() || !player.getOffhandItem().isEmpty())) return null;
-		double range = player.blockInteractionRange();
-		Vec3 from = player.getEyePosition();
-		Vec3 to = from.add(player.getViewVector(1.0F).scale(range));
-		CollisionContext context = CollisionContext.of(player);
-		return BlockGetter.<BlockHitResult, Minecraft>traverseBlocks(from, to, mc, (client, pos) -> hitUsable(client, pos, from, to, context), client -> null);
+	private static BlockHitResult firstBlock(Minecraft mc, Vec3 from, Vec3 to) {
+		CollisionContext context = CollisionContext.of(mc.player);
+		BlockPos cameraBlock = BlockPos.containing(from);
+		return BlockGetter.<BlockHitResult, Minecraft>traverseBlocks(from, to, mc, (client, pos) -> {
+			BlockState state = client.level.getBlockState(pos);
+			if (state.isAir()) return null;
+			BlockPos at = pos.immutable();
+			BlockHitResult hit = client.level.clipWithInteractionOverride(from, to, at, state.getShape(client.level, at, context), state);
+			return hit != null && hit.isInside() && at.equals(cameraBlock) ? null : hit;
+		}, client -> null);
 	}
 
-	private static BlockHitResult hitUsable(Minecraft mc, BlockPos pos, Vec3 from, Vec3 to, CollisionContext context) {
-		BlockState state = mc.level.getBlockState(pos);
-		if (state.isAir() || !usable(state)) return null;
-		return state.getShape(mc.level, pos, context).clip(from, to, pos.immutable());
+	/** True when nothing is between the player's eyes and the point ({@code block}: or the first thing there is that same block face). */
+	private static boolean playerSees(Minecraft mc, Vec3 eye, Vec3 point, BlockHitResult block) {
+		BlockHitResult seen = mc.level.clip(new ClipContext(eye, point, ClipContext.Block.OUTLINE, ClipContext.Fluid.NONE, mc.player));
+		if (seen.getType() == HitResult.Type.MISS) return true;
+		return block != null && seen.getBlockPos().equals(block.getBlockPos()) && seen.getDirection() == block.getDirection();
 	}
 
-	/** Has a block entity, or its class (not the base block) overrides one of the right click methods. */
-	private static boolean usable(BlockState state) {
-		return state.hasBlockEntity() || USABLE.computeIfAbsent(state.getBlock().getClass(), FreecamReach::overridesUse);
-	}
-
-	private static boolean overridesUse(Class<?> type) {
-		for (Class<?> c = type; c != null && c != Block.class && c != BlockBehaviour.class; c = c.getSuperclass()) {
-			for (java.lang.reflect.Method method : c.getDeclaredMethods()) {
-				if (method.getName().equals("useWithoutItem") || method.getName().equals("useItemOn")) return true;
-			}
-		}
-		return false;
+	private static BlockHitResult miss(Vec3 from, Vec3 location) {
+		Direction direction = Direction.getApproximateNearest(location.x - from.x, location.y - from.y, location.z - from.z);
+		return BlockHitResult.miss(location, direction, BlockPos.containing(location));
 	}
 }

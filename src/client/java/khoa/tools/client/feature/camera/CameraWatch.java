@@ -133,6 +133,13 @@ public final class CameraWatch {
 		KhoaConfig.put("freecam", "speed_v", speedV);
 	}
 
+	/** Puts the freecam at an exact spot (used by the in-process self test). */
+	public static void moveTo(Vec3 position, float newYaw, float newPitch) {
+		pos = position;
+		yaw = newYaw;
+		pitch = newPitch;
+	}
+
 	/** Mouse wheel while in freecam: both speeds faster / slower by at least 1 (saved, so the sliders follow). */
 	public static void scroll(double amount) {
 		if (amount == 0) return;

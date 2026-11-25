@@ -17,9 +17,12 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.client.gui.screens.inventory.AbstractContainerScreen;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.world.entity.LivingEntity;
+import net.minecraft.world.level.block.Blocks;
 import net.minecraft.world.phys.BlockHitResult;
 import net.minecraft.world.phys.EntityHitResult;
+import net.minecraft.world.phys.HitResult;
 import net.minecraft.world.phys.Vec3;
 
 import khoa.tools.client.config.KhoaCheat;
@@ -28,6 +31,7 @@ import khoa.tools.client.feature.KhoaFeature;
 import khoa.tools.client.feature.KhoaFeatures;
 import khoa.tools.client.feature.camera.CameraWatch;
 import khoa.tools.client.mixin.KeyMappingAccessor;
+import khoa.tools.setting.Setting;
 
 /**
  * In-process test of Freecam (dev only: {@code gradlew runClient -Pfreecamtest}). Flies the camera with a replaced key reader,
@@ -196,6 +200,31 @@ final class FreecamSelfTest {
 		Screenshot.grab(mc.gameDirectory, name + ".png", mc.gameRenderer.mainRenderTarget(), 1, c -> write("  screenshot " + name));
 	}
 
+	private static Setting row(KhoaFeature feature, String key) {
+		return feature.settings().stream().filter(s -> s.key.equals(key)).findFirst().orElseThrow();
+	}
+
+	/** A camera spot behind the wall, at head height; yaw 180 looks back towards the player. */
+	private static Vec3 behind() {
+		return new Vec3(origin.getX() + 0.5, origin.getY() + 1.5, origin.getZ() + 4.5);
+	}
+
+	private static void aimBack() {
+		CameraWatch.moveTo(behind(), 180, 0);
+	}
+
+	private static boolean targets(Minecraft mc, int dz, Direction face) {
+		return mc.hitResult instanceof BlockHitResult hit && hit.getType() == HitResult.Type.BLOCK
+			&& hit.getBlockPos().equals(origin.offset(0, 1, dz)) && hit.getDirection() == face;
+	}
+
+	private static String describe(Minecraft mc) {
+		if (mc.hitResult instanceof BlockHitResult hit) {
+			return hit.getType() + " " + hit.getBlockPos().subtract(origin).toShortString() + " " + hit.getDirection();
+		}
+		return String.valueOf(mc.hitResult);
+	}
+
 	private static void build(Minecraft mc) {
 		KhoaFeature freecam = feature("freecam");
 		final CameraType[] cameraType = new CameraType[1];
@@ -335,49 +364,109 @@ final class FreecamSelfTest {
 			cmd(mc, "fill " + at(-1, 0, 1) + " " + at(1, 2, 1) + " stone");
 		}, () -> expect(huskHealth(mc) == 20 && mc.hitResult instanceof BlockHitResult, "health " + huskHealth(mc) + " hit " + mc.hitResult), 30);
 
-		add("entity option on: the aim reaches the husk through the wall", () -> KhoaConfig.put("freecam", "entity_through_wall", true),
-			() -> expect(mc.hitResult instanceof EntityHitResult, "hit " + mc.hitResult), 5);
+		add("head aim is the default row and is on", () -> {
+		}, () -> expect(freecam.settings().size() == 5 && row(freecam, "head_aim").getBool(), "rows " + freecam.settings().size()), 2);
+
+		add("head aim off turns both through wall options on", () -> row(freecam, "head_aim").setBool(false), () -> expect(
+			row(freecam, "entity_through_wall").getBool() && row(freecam, "block_through_wall").getBool() && FreecamFeature.usesCameraAim(), "options not on"), 3);
+
+		add("head aim on turns both off", () -> row(freecam, "head_aim").setBool(true), () -> expect(
+			!row(freecam, "entity_through_wall").getBool() && !row(freecam, "block_through_wall").getBool() && !FreecamFeature.usesCameraAim(), "options still on"), 3);
+
+		add("one option on turns head aim off, turning the last one off turns it on", () -> row(freecam, "block_through_wall").setBool(true), () -> {
+			boolean off = !row(freecam, "head_aim").getBool();
+			row(freecam, "block_through_wall").setBool(false);
+			return expect(off && row(freecam, "head_aim").getBool(), "head aim wrong");
+		}, 3);
+
+		add("camera behind the wall, head aim: target stays the head's block face", () -> {
+			cmd(mc, "kill @e[type=husk]");
+			cmd(mc, "item replace entity @s weapon.mainhand with stone 64");
+			CameraWatch.moveTo(behind(), 180, 0);
+		}, () -> expect(targets(mc, 1, Direction.NORTH), "hit " + describe(mc)), 15);
+
+		add("block through wall: the camera targets the far face", () -> {
+			row(freecam, "block_through_wall").setBool(true);
+			aimBack();
+		}, () -> expect(targets(mc, 1, Direction.SOUTH), "hit " + describe(mc)), 3);
+
+		add("screenshot with the selection box", () -> {
+			aimBack();
+			shot(mc, "freecamtest-2-through");
+		}, null, 3);
+
+		add("right click places on the face the camera aims at", () -> {
+			aimBack();
+			click(mc.options.keyUse);
+		},
+			() -> expect(mc.level.getBlockState(origin.offset(0, 1, 2)).is(Blocks.STONE) && mc.level.getBlockState(origin.offset(0, 1, 0)).isAir(),
+				"far " + mc.level.getBlockState(origin.offset(0, 1, 2)) + " near " + mc.level.getBlockState(origin.offset(0, 1, 0))), 15);
+
+		add("left click breaks the block the camera aims at", () -> {
+			aimBack();
+			click(mc.options.keyAttack);
+		},
+			() -> expect(mc.level.getBlockState(origin.offset(0, 1, 2)).isAir() && mc.level.getBlockState(origin.offset(0, 1, 1)).is(Blocks.STONE),
+				"far " + mc.level.getBlockState(origin.offset(0, 1, 2))), 15);
+
+		add("only entity option on: the hidden block face is not a target", () -> {
+			row(freecam, "block_through_wall").setBool(false);
+			row(freecam, "entity_through_wall").setBool(true);
+		}, () -> expect(mc.hitResult.getType() == HitResult.Type.MISS, "hit " + describe(mc)), 8);
+
+		add("out of the player's reach: no target", () -> {
+			row(freecam, "head_aim").setBool(false);
+			CameraWatch.moveTo(behind().add(0, 0, 5), 180, 0);
+			cmd(mc, "setblock " + at(0, 1, 1) + " air");
+			cmd(mc, "setblock " + at(0, 1, -6) + " stone");
+		}, () -> expect(mc.hitResult.getType() == HitResult.Type.MISS, "hit " + describe(mc)), 20);
+
+		add("husk behind the wall, camera aims at it", () -> {
+			cmd(mc, "setblock " + at(0, 1, -6) + " air");
+			cmd(mc, "setblock " + at(0, 1, 1) + " stone");
+			cmd(mc, "item replace entity @s weapon.mainhand with air");
+			summonHusk(mc);
+			CameraWatch.moveTo(behind(), 180, 0);
+		}, () -> expect(mc.hitResult instanceof EntityHitResult && huskHealth(mc) == 20, "hit " + describe(mc) + " health " + huskHealth(mc)), 30);
+
+		add("only block option on: the hidden husk is not a target", () -> {
+			row(freecam, "entity_through_wall").setBool(false);
+			row(freecam, "block_through_wall").setBool(true);
+		}, () -> expect(mc.hitResult.getType() == HitResult.Type.MISS, "hit " + describe(mc)), 8);
+
+		add("entity option on: attack the husk from the camera", () -> {
+			row(freecam, "entity_through_wall").setBool(true);
+		}, () -> expect(mc.hitResult instanceof EntityHitResult, "hit " + describe(mc)), 8);
 
 		add("attack through the wall", () -> click(mc.options.keyAttack),
 			() -> expect(huskHealth(mc) < 20 && mc.level.getBlockState(origin.offset(0, 1, 1)).isSolidRender(), "husk health " + huskHealth(mc)), 20);
 
-		add("screenshot with the through wall line", () -> shot(mc, "freecamtest-2-through"), null, 10);
+		add("cheat false: aim rows hidden, head aim used", () -> KhoaCheat.set(false),
+			() -> expect(freecam.settings().size() == 2 && !FreecamFeature.usesCameraAim() && targets(mc, 1, Direction.NORTH) && CameraWatch.isFree(),
+				"rows " + freecam.settings().size() + " hit " + describe(mc)), 5);
 
-		add("cheat false: options hidden and without effect", () -> KhoaCheat.set(false),
-			() -> expect(freecam.settings().size() == 2 && mc.hitResult instanceof BlockHitResult && CameraWatch.isFree(),
-				"rows " + freecam.settings().size() + " hit " + mc.hitResult + " free " + CameraWatch.isFree()), 5);
+		add("cheat true: five rows again", () -> KhoaCheat.set(true), () -> expect(freecam.settings().size() == 5, "rows " + freecam.settings().size()), 5);
 
-		add("cheat true: four rows again", () -> {
-			KhoaCheat.set(true);
-			KhoaConfig.put("freecam", "entity_through_wall", false);
-		}, () -> expect(freecam.settings().size() == 4 && mc.hitResult instanceof BlockHitResult, "rows " + freecam.settings().size()), 5);
+		add("freecam off with options on: vanilla aim", () -> freecam.activate(mc),
+			() -> expect(!CameraWatch.isFree() && targets(mc, 1, Direction.NORTH), "hit " + describe(mc)), 8);
 
-		add("freecam off with option on: no through wall", () -> {
-			KhoaConfig.put("freecam", "entity_through_wall", true);
-			freecam.activate(mc);
-		}, () -> expect(!CameraWatch.isFree() && mc.hitResult instanceof BlockHitResult, "hit " + mc.hitResult), 8);
-
-		add("chest behind the wall", () -> {
-			KhoaConfig.put("freecam", "entity_through_wall", false);
+		add("chest behind the wall, camera aims at it", () -> {
 			cmd(mc, "kill @e[type=husk]");
-			cmd(mc, "setblock " + at(0, 1, 2) + " chest[facing=north]");
+			cmd(mc, "setblock " + at(0, 1, 2) + " chest[facing=south]");
 			face(mc);
 			freecam.activate(mc);
-		}, () -> expect(mc.hitResult instanceof BlockHitResult h && h.getBlockPos().equals(origin.offset(0, 1, 1)), "hit " + mc.hitResult), 20);
+			CameraWatch.moveTo(behind(), 180, 0);
+		}, () -> expect(targets(mc, 2, Direction.SOUTH), "hit " + describe(mc)), 20);
 
-		add("block option off: right click does not open it", () -> click(mc.options.keyUse),
-			() -> expect(mc.gui.screen() == null, "screen " + mc.gui.screen()), 15);
-
-		add("block option on: right click opens the chest through the wall", () -> {
-			KhoaConfig.put("freecam", "block_through_wall", true);
-			click(mc.options.keyUse);
-		}, () -> expect(mc.gui.screen() instanceof AbstractContainerScreen<?>, "screen " + mc.gui.screen()), 20);
+		add("right click opens the chest through the wall", () -> click(mc.options.keyUse),
+			() -> expect(mc.gui.screen() instanceof AbstractContainerScreen<?>, "screen " + mc.gui.screen()), 20);
 
 		add("close the chest; the freecam is still on", () -> mc.player.closeContainer(),
 			() -> expect(CameraWatch.isFree() && mc.gui.screen() == null, "screen " + mc.gui.screen()), 10);
 
 		add("tidy up", () -> {
 			freecam.activate(mc);
+			KhoaConfig.put("freecam", "entity_through_wall", false);
 			KhoaConfig.put("freecam", "block_through_wall", false);
 			CameraWatch.setSpeedH(10);
 			CameraWatch.setSpeedV(10);
