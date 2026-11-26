@@ -221,3 +221,7 @@
 - Block Finder picker lists variants after the generic card: one card per mob for Spawner and Trial Spawner (tick box "Vanilla mobs", default on), Normal / Ominous Vault. Keys "spawner:<mob>", "trial:<mob>", "vault:normal|ominous"; the generic block card still matches all. Option PickData.VARIANTS enables this, other block pickers are unchanged.
 - SpawnerMobs.mobOf (moved from SpawnerScanner) reads the trial spawner's synced spawn_data first, so Spawner Finder also benefits when no mob is spinning.
 - Verified: temporary in-game self test (mob / vault filters, picker screenshots), then removed; `gradlew build`. Not verified: multiplayer server data.
+
+## Waypoints: Xaero address picker (2026-11-26)
+- Shift+click "Import Xaero" opens XaeroPickScreen (item-picker style, multi-select, search) listing every Xaero minimap folder with waypoints; saved server names from servers.dat are shown for matching addresses. Picked folders are imported into the current world (existing duplicate skip). The same screen replaces the old single-click list used when no folder matches. Plain click unchanged.
+- Verified: temporary in-game self test (open picker, add by double click / button, search, import), then removed; `gradlew build`. Not verified: the physical Shift key on the button.

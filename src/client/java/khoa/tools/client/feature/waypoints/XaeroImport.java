@@ -22,7 +22,7 @@ import khoa.tools.KhoaTools;
  */
 public final class XaeroImport {
 	/** A Xaero world folder with the number of waypoints found in it. */
-	public record Folder(Path path, String label, int count, boolean thisWorld) {
+	public record Folder(Path path, String address, int count, boolean thisWorld, boolean multiplayer) {
 	}
 
 	public record Result(int imported, int skipped) {
@@ -52,7 +52,7 @@ public final class XaeroImport {
 				String name = dir.getFileName().toString();
 				boolean multiplayer = name.startsWith("Multiplayer_");
 				boolean match = multiplayer == isMultiplayer(mc) && !mine.isEmpty() && normalize(name, multiplayer).equals(mine);
-				out.add(new Folder(dir, label(name), found.size(), match));
+				out.add(new Folder(dir, address(name), found.size(), match, multiplayer));
 			}
 		} catch (IOException e) {
 			KhoaTools.LOGGER.error("Could not list the Xaero minimap folder", e);
@@ -199,8 +199,14 @@ public final class XaeroImport {
 		return s.replace("%us%", "_").toLowerCase(Locale.ROOT).trim();
 	}
 
-	private static String label(String folderName) {
-		String s = folderName.startsWith("Multiplayer_") ? folderName.substring("Multiplayer_".length()) + " (server)" : folderName;
-		return s.replace("%us%", "_");
+	/** Folder name -> the server address or world name it stands for. */
+	private static String address(String folderName) {
+		String s = folderName.startsWith("Multiplayer_") ? folderName.substring("Multiplayer_".length()) : folderName;
+		return s.replace("%us%", "_").replace("%cl%", ":");
+	}
+
+	/** True when a server address (port ignored) is the one this multiplayer folder belongs to. */
+	static boolean sameAddress(Folder folder, String ip) {
+		return ip != null && folder.multiplayer() && normalize(folder.path().getFileName().toString(), true).equals(normalize(ip, true));
 	}
 }

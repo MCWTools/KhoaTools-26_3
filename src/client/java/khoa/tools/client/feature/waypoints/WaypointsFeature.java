@@ -57,7 +57,7 @@ public final class WaypointsFeature implements KhoaFeature {
 
 	@Override
 	public String description() {
-		return "Click the card to open the waypoint manager: single-block or area waypoints, groups, colours, sorting, multi-select and Xaero import. "
+		return "Click the card to open the waypoint manager: single-block or area waypoints, groups, colours, sorting, multi-select and Xaero import (Shift+click Import Xaero to pick other servers / worlds). "
 			+ "Waypoints get a highlighted block and a board arrow; look at one to zoom it and see the distance. Deaths are saved automatically with an item despawn timer. "
 			+ "Files: .minecraft/khoatools/waypoints/<server or world>/Waypoints.json + Groups.json (+ backup folder).";
 	}

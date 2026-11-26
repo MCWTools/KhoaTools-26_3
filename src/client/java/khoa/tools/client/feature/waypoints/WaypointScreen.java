@@ -16,6 +16,7 @@ import com.google.gson.Gson;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.components.Tooltip;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
@@ -138,7 +139,8 @@ public final class WaypointScreen extends Screen {
 		x += bw + GAP;
 		delete = this.addRenderableWidget(Button.builder(Component.literal("Delete"), b -> deleteSelected()).bounds(x, TOP_BAR_Y, bw, BAR_H).build());
 		x += bw + GAP;
-		this.addRenderableWidget(Button.builder(Component.literal("Import Xaero"), b -> importXaero()).bounds(x, TOP_BAR_Y, bw, BAR_H).build());
+		this.addRenderableWidget(Button.builder(Component.literal("Import Xaero"), b -> importXaero(this.minecraft.hasShiftDown())).bounds(x, TOP_BAR_Y, bw, BAR_H)
+			.tooltip(Tooltip.create(Component.literal("Import the Xaero waypoints of this server / world.\nShift+click: pick other servers / worlds to import."))).build());
 		x += bw + GAP;
 		sort = this.addRenderableWidget(Button.builder(Component.literal("Sort"), b -> cycleSort()).bounds(x, TOP_BAR_Y, frameX + frameW - x, BAR_H).build());
 		back = this.addRenderableWidget(Button.builder(Component.literal("< Back"), b -> onClose()).bounds(frameX, this.height - 26, 70, BAR_H).build());
@@ -631,14 +633,15 @@ public final class WaypointScreen extends Screen {
 		say((show ? "Shown " : "Hidden ") + sel.size() + ".", COL_DIM);
 	}
 
-	private void importXaero() {
+	/** {@code choose}: always open the address picker instead of importing the folders of this world. */
+	private void importXaero(boolean choose) {
 		List<XaeroImport.Folder> folders = XaeroImport.folders(this.minecraft);
 		if (folders.isEmpty()) {
 			say("No Xaero waypoints found in .minecraft/xaero/minimap.", 0xFFFF8877);
 			return;
 		}
 		List<XaeroImport.Folder> mine = folders.stream().filter(XaeroImport.Folder::thisWorld).toList();
-		if (mine.isEmpty()) {
+		if (choose || mine.isEmpty()) {
 			this.minecraft.gui.setScreen(new XaeroPickScreen(this, folders, this::imported));
 			return;
 		}
