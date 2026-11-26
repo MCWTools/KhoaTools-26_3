@@ -225,3 +225,7 @@
 ## Waypoints: Xaero address picker (2026-11-26)
 - Shift+click "Import Xaero" opens XaeroPickScreen (item-picker style, multi-select, search) listing every Xaero minimap folder with waypoints; saved server names from servers.dat are shown for matching addresses. Picked folders are imported into the current world (existing duplicate skip). The same screen replaces the old single-click list used when no folder matches. Plain click unchanged.
 - Verified: temporary in-game self test (open picker, add by double click / button, search, import), then removed; `gradlew build`. Not verified: the physical Shift key on the button.
+
+## /khoatoolsclient enablewurst (2026-11-26)
+- feature/wurst/WurstEnable: calls WurstClient.INSTANCE.setEnabled(true) by reflection (same as Wurst's Statistics-screen button, which "Hide enable button" removes). Errors when Wurst is not installed or the API changed; says so when already enabled.
+- Verified in the dev game without Wurst and with Wurst 7.56.2 (disabled by code, re-enabled by the command), temporary test removed; `gradlew build`.

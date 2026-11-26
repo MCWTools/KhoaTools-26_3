@@ -104,6 +104,7 @@ public class KhoaToolsClient implements ClientModInitializer {
 			for (KhoaFeature feature : KhoaFeatures.all()) {
 				registerGated(root, feature, context);
 			}
+			root.then(khoa.tools.client.feature.wurst.WurstEnable.command());
 			dispatcher.register(root);
 
 			// /khoagui = opens the GUI, no arguments. (/khoatools is the server-side, op-only command and has no GUI.)
