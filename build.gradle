@@ -38,6 +38,15 @@ loom {
 			}
 		}
 	}
+	// ./gradlew runClient -Ppickertest : same, runs the picker categories / Advanced Setting / Block Finder self test (PickerSelfTest)
+	if (project.hasProperty('pickertest')) {
+		runs {
+			client {
+				vmArg "-Dkhoatools.pickertest=true"
+				programArgs "--quickPlaySingleplayer", "New World"
+			}
+		}
+	}
 	if (project.hasProperty('autotest')) {
 		runs {
 			client {
@@ -71,8 +80,8 @@ dependencies {
 	implementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_api_version}"
 
 	// KhoaAPILibs (modid khoaapi): a separate mod that players install next to KhoaTools. Compiled against, never bundled.
-	implementation files("libs/KhoaAPILibs-1.3.0.jar")
-	clientImplementation files("libs/KhoaAPILibs-1.3.0.jar")
+	implementation files("libs/KhoaAPILibs-1.4.0.jar")
+	clientImplementation files("libs/KhoaAPILibs-1.4.0.jar")
 
 	// self test only: run the dev game WITH Litematica, so the placement path of Draw Shape V2 is exercised
 	if (project.hasProperty('autotest')) {

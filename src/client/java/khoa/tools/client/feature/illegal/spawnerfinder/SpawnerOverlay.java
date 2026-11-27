@@ -54,7 +54,8 @@ final class SpawnerOverlay {
 			if (drawn++ >= maxCount) {
 				break;
 			}
-			int center = s.type() == null ? 0xFFFF00FF : SpawnerMobs.color(s.type());
+			Integer custom = SpawnerFinderFeature.overrideColor(s); // Advanced Setting: replaces every colour of the overlay
+			int center = custom != null ? custom : s.type() == null ? 0xFFFF00FF : SpawnerMobs.color(s.type());
 			GizmoStyle centerStyle = GizmoStyle.strokeAndFill(0xFF000000 | (center & 0xFFFFFF), 1.5F, 0x55000000 | (center & 0xFFFFFF));
 			if (FinderMode.lines(mode)) {
 				FinderMode.line(lineFrom, Vec3.atCenterOf(s.pos()), 0xFF000000 | center);
@@ -63,7 +64,7 @@ final class SpawnerOverlay {
 				continue;
 			}
 			// opaque outline of the whole block (see-through tiles, solid edges)
-			Gizmos.cuboid(s.pos(), GizmoStyle.stroke(s.trial() ? OUTLINE_TRIAL : OUTLINE_NORMAL, 2.0F)).setAlwaysOnTop();
+			Gizmos.cuboid(s.pos(), GizmoStyle.stroke(custom != null ? 0xFF000000 | custom : s.trial() ? OUTLINE_TRIAL : OUTLINE_NORMAL, 2.0F)).setAlwaysOnTop();
 			for (Direction face : Direction.values()) {
 				double fx = s.pos().getX() + 0.5 + face.getStepX() * 0.5;
 				double fy = s.pos().getY() + 0.5 + face.getStepY() * 0.5;
@@ -72,12 +73,13 @@ final class SpawnerOverlay {
 				if (toEye <= 0) {
 					continue; // back face: only the faces turned towards you are drawn
 				}
-				drawFace(s, face, centerStyle);
+				GizmoStyle tint = custom == null ? null : GizmoStyle.fill(0x3C000000 | (custom & 0xFFFFFF));
+				drawFace(s, face, centerStyle, tint == null ? GRAY : tint, tint == null ? COPPER : tint);
 			}
 		}
 	}
 
-	private static void drawFace(SpawnerScanner.Info s, Direction face, GizmoStyle centerStyle) {
+	private static void drawFace(SpawnerScanner.Info s, Direction face, GizmoStyle centerStyle, GizmoStyle gray, GizmoStyle copper) {
 		// (u, v) are the face's two axes, ordered so that corners c, c+u, c+u+v, c+v run counter-clockwise seen from outside.
 		Direction.Axis a = face.getAxis();
 		Vec3 u = unit(a == Direction.Axis.X ? Direction.Axis.Y : a == Direction.Axis.Y ? Direction.Axis.Z : Direction.Axis.X);
@@ -93,19 +95,19 @@ final class SpawnerOverlay {
 		double oy = s.pos().getY();
 		double oz = s.pos().getZ();
 		if (!s.trial()) {
-			rect(ox, oy, oz, face, u, v, 0, 1, 0, 1, LIFT_BG, GRAY);
+			rect(ox, oy, oz, face, u, v, 0, 1, 0, 1, LIFT_BG, gray);
 		} else if (uIsUp) { // side face: copper top half
-			rect(ox, oy, oz, face, u, v, 0.5, 1, 0, 1, LIFT_BG, COPPER);
-			rect(ox, oy, oz, face, u, v, 0, 0.5, 0, 1, LIFT_BG, GRAY);
+			rect(ox, oy, oz, face, u, v, 0.5, 1, 0, 1, LIFT_BG, copper);
+			rect(ox, oy, oz, face, u, v, 0, 0.5, 0, 1, LIFT_BG, gray);
 		} else if (vIsUp) {
-			rect(ox, oy, oz, face, u, v, 0, 1, 0.5, 1, LIFT_BG, COPPER);
-			rect(ox, oy, oz, face, u, v, 0, 1, 0, 0.5, LIFT_BG, GRAY);
+			rect(ox, oy, oz, face, u, v, 0, 1, 0.5, 1, LIFT_BG, copper);
+			rect(ox, oy, oz, face, u, v, 0, 1, 0, 0.5, LIFT_BG, gray);
 		} else if (u.z != 0) { // top / bottom face: copper on the north half
-			rect(ox, oy, oz, face, u, v, 0, 0.5, 0, 1, LIFT_BG, COPPER);
-			rect(ox, oy, oz, face, u, v, 0.5, 1, 0, 1, LIFT_BG, GRAY);
+			rect(ox, oy, oz, face, u, v, 0, 0.5, 0, 1, LIFT_BG, copper);
+			rect(ox, oy, oz, face, u, v, 0.5, 1, 0, 1, LIFT_BG, gray);
 		} else {
-			rect(ox, oy, oz, face, u, v, 0, 1, 0, 0.5, LIFT_BG, COPPER);
-			rect(ox, oy, oz, face, u, v, 0, 1, 0.5, 1, LIFT_BG, GRAY);
+			rect(ox, oy, oz, face, u, v, 0, 1, 0, 0.5, LIFT_BG, copper);
+			rect(ox, oy, oz, face, u, v, 0, 1, 0.5, 1, LIFT_BG, gray);
 		}
 		rect(ox, oy, oz, face, u, v, CENTER_LO, CENTER_HI, CENTER_LO, CENTER_HI, LIFT_CENTER, centerStyle);
 	}

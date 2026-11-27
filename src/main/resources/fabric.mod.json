@@ -45,6 +45,6 @@
 		"minecraft": "~26.3",
 		"java": ">=25",
 		"fabric-api": "*",
-		"khoaapi": ">=1.3.0"
+		"khoaapi": ">=1.4.0"
 	}
 }

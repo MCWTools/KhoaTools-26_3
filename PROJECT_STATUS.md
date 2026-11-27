@@ -229,3 +229,10 @@
 ## /khoatoolsclient enablewurst (2026-11-26)
 - feature/wurst/WurstEnable: calls WurstClient.INSTANCE.setEnabled(true) by reflection (same as Wurst's Statistics-screen button, which "Hide enable button" removes). Errors when Wurst is not installed or the API changed; says so when already enabled.
 - Verified in the dev game without Wurst and with Wurst 7.56.2 (disabled by code, re-enabled by the command), temporary test removed; `gradlew build`.
+
+## 2026-11-27: Ore categories, Advanced Setting, Block Finder transparency
+- Needs KhoaAPILibs >= 1.4.0 (`libs/KhoaAPILibs-1.4.0.jar`).
+- Item picker has category buttons: block rows All / Ore Blocks, item rows All / Ore Items / Ore Blocks.
+- Shift + double click a card opens `AdvancedPickScreen` ("Advanced Setting"): Y level range (default = world bottom to height limit) and, for Block Finder / Spawner Finder, an RGB overlay colour override. Block Log uses the Y range only. Stored as `<list key>_advanced` next to the list in khoatools.json (`PickAdvanced`, `PickFilter`); removing a pick drops its options. Mob Finder (entities) has none.
+- Block Finder: "Outline transparency" (default 0) and "Fill transparency" (default 72) sliders.
+- Verified: `gradlew build` OK; in-game `gradlew runClient -Ppickertest` 23/23 + screenshots. NOT tested in game: Spawner Finder range / colour, Block Log range, Ore Items buttons in an item picker.

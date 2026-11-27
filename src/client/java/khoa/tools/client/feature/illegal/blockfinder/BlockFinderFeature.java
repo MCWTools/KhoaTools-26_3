@@ -55,12 +55,13 @@ public final class BlockFinderFeature implements KhoaFeature {
 	private static final int SCAN_PERIOD = 10;
 	private static final int FALLBACK_RGB = 0xFF2020;
 	private static final float OUTLINE_BRIGHTEN = 0.45F;
-	private static final int FILL_ALPHA = 0x48;
+	/** Default transparency of the face fill in percent (alpha 0x47). */
+	private static final int DEFAULT_FILL_TRANSPARENCY = 72;
 
 	private static boolean on;
 	private static int timer;
 
-	private record Draw(BlockPos pos, int rgb, int fill, int outline) {
+	private record Draw(BlockPos pos, int rgb, int outline) {
 	}
 
 	private record Edge(Vec3 a, Vec3 b, int color) {
@@ -77,28 +78,39 @@ public final class BlockFinderFeature implements KhoaFeature {
 	private static volatile Result result = Result.EMPTY;
 
 	/**
-	 * What is picked: whole blocks, plus variants (mob ids of spawners / trial spawners, vault types).
+	 * What is picked: whole blocks, plus variants (mob ids of spawners / trial spawners, vault types). Every map goes from the matched
+	 * thing to its picked key, which the Advanced Setting (Y level range, colour) belongs to.
 	 * {@code candidates} = every block that can match, for the quick section test.
 	 */
-	private record Wanted(Set<Block> blocks, Set<String> spawnerMobs, Set<String> trialMobs, Set<String> vaults, Set<Block> candidates) {
-		static final Wanted NONE = new Wanted(Set.of(), Set.of(), Set.of(), Set.of(), Set.of());
+	private record Wanted(Map<Block, String> blocks, Map<String, String> spawnerMobs, Map<String, String> trialMobs, Map<String, String> vaults,
+		Set<Block> candidates) {
+		static final Wanted NONE = new Wanted(Map.of(), Map.of(), Map.of(), Map.of(), Set.of());
 
-		/** The block entity is only looked up when a spawner variant has to be checked. */
-		boolean matches(BlockState state, LevelChunk chunk, BlockPos pos) {
+		/**
+		 * The picked key that marks this block, or null. A variant card (one mob, one vault type) wins over the plain block card; each only
+		 * counts inside its own Y level range. The block entity is only looked up when a spawner variant has to be checked.
+		 */
+		String match(BlockState state, LevelChunk chunk, BlockPos pos) {
 			Block block = state.getBlock();
-			if (blocks.contains(block)) {
-				return true;
-			}
 			if (!candidates.contains(block)) {
-				return false;
+				return null;
 			}
+			String variant = null;
 			if (block == Blocks.VAULT) {
-				return vaults.contains(state.getValue(VaultBlock.OMINOUS) ? PickData.VAULT_OMINOUS : PickData.VAULT_NORMAL);
+				variant = vaults.get(state.getValue(VaultBlock.OMINOUS) ? PickData.VAULT_OMINOUS : PickData.VAULT_NORMAL);
+			} else {
+				Map<String, String> mobs = block == Blocks.SPAWNER ? spawnerMobs : block == Blocks.TRIAL_SPAWNER ? trialMobs : Map.of();
+				if (!mobs.isEmpty()) {
+					BlockEntity be = chunk.getBlockEntity(pos);
+					EntityType<?> type = be == null ? null : SpawnerMobs.mobOf(be, chunk.getLevel(), pos);
+					variant = type == null ? null : mobs.get(SpawnerMobs.id(type));
+				}
 			}
-			Set<String> mobs = block == Blocks.SPAWNER ? spawnerMobs : trialMobs;
-			BlockEntity be = chunk.getBlockEntity(pos);
-			EntityType<?> type = be == null ? null : SpawnerMobs.mobOf(be, chunk.getLevel(), pos);
-			return type != null && mobs.contains(SpawnerMobs.id(type));
+			if (variant != null && PICKED.advanced(variant).allowsY(pos.getY())) {
+				return variant;
+			}
+			String plain = blocks.get(block);
+			return plain != null && PICKED.advanced(plain).allowsY(pos.getY()) ? plain : null;
 		}
 	}
 
@@ -110,6 +122,20 @@ public final class BlockFinderFeature implements KhoaFeature {
 			Minecraft mc = Minecraft.getInstance();
 			return mc.level == null ? "block" : mc.level.getBlockState(pos).getBlock().getName().getString();
 		}, false);
+
+	// ---- read by the in-game self test ----
+
+	public static List<BlockPos> markedPositions() {
+		return List.copyOf(result.positions());
+	}
+
+	public static Integer outlineColorAt(BlockPos pos) {
+		return result.draws().stream().filter(d -> d.pos().equals(pos)).map(Draw::outline).findFirst().orElse(null);
+	}
+
+	public static int faceCount() {
+		return result.faces().size();
+	}
 
 	@Override
 	public String id() {
@@ -151,7 +177,8 @@ public final class BlockFinderFeature implements KhoaFeature {
 	public List<Setting> settings() {
 		return List.of(
 			PICKED.setting("Blocks to find", "Blocks that get an overlay. Spawner / Trial Spawner can be picked per mob and Vault as normal or ominous; "
-				+ "the plain block card matches all of them. Empty = nothing is shown.", List.of(PickData.BLOCK, PickData.VARIANTS))
+				+ "the plain block card matches all of them. Shift + double click: Advanced Setting (Y level, colour). Empty = nothing is shown.", List.of(PickData.BLOCK, PickData.VARIANTS))
+				.advanced(PICKED, true)
 				.pickerToggle("Vanilla mobs", "On: spawner cards only for the mobs vanilla has spawners for. Off: every mob in the game (for servers with custom spawners).",
 					BlockFinderFeature::vanillaPicker, v -> KhoaConfig.put(ID, "vanilla_picker", v)),
 			FinderMode.setting(ID),
@@ -161,6 +188,10 @@ public final class BlockFinderFeature implements KhoaFeature {
 			}),
 			Setting.bool("texture_color", "Use block colour", "On: overlay colour = average colour of the block's texture. Off: red for every block.",
 				BlockFinderFeature::textureColor, v -> KhoaConfig.put(ID, "texture_color", v)),
+			Setting.slider("outline_transparency", "Outline transparency", "Transparency of the outlines and lines in percent: 0 = solid, 100 = invisible.", 0, 100,
+				BlockFinderFeature::outlineTransparency, v -> KhoaConfig.put(ID, "outline_transparency", v)),
+			Setting.slider("fill_transparency", "Fill transparency", "Transparency of the face fill in percent: 0 = solid, 100 = invisible.", 0, 100,
+				BlockFinderFeature::fillTransparency, v -> KhoaConfig.put(ID, "fill_transparency", v)),
 			Setting.slider("limit", "Overlay limit", "Most overlays drawn at once. When there are more blocks, the farthest ones are hidden.", 10, 5000,
 				BlockFinderFeature::limit, v -> KhoaConfig.put(ID, "limit", v)),
 			Setting.slider("radius", "Scan radius (blocks)", "How far around you blocks are searched. Bigger = more work per scan.", 8, 96,
@@ -188,6 +219,18 @@ public final class BlockFinderFeature implements KhoaFeature {
 		return KhoaConfig.getBool(ID, "vanilla_picker", true);
 	}
 
+	static int outlineTransparency() {
+		return Math.max(0, Math.min(100, KhoaConfig.getInt(ID, "outline_transparency", 0)));
+	}
+
+	static int fillTransparency() {
+		return Math.max(0, Math.min(100, KhoaConfig.getInt(ID, "fill_transparency", DEFAULT_FILL_TRANSPARENCY)));
+	}
+
+	private static int alpha(int transparency) {
+		return Math.round(255 * (100 - transparency) / 100.0F);
+	}
+
 	static int limit() {
 		return KhoaConfig.getInt(ID, "limit", 500);
 	}
@@ -210,6 +253,7 @@ public final class BlockFinderFeature implements KhoaFeature {
 
 	@Override
 	public void onInit() {
+		ClientTickEvents.END_CLIENT_TICK.register(khoa.tools.client.gui.picker.PickerSelfTest::tick); // dev only (-Ppickertest)
 		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
 			if (!on || mc.level == null || mc.player == null) {
 				PATH.onClientTick(mc);
@@ -248,7 +292,9 @@ public final class BlockFinderFeature implements KhoaFeature {
 		if (FinderMode.lines(mode)) {
 			Vec3 from = FinderMode.lineStart(mc);
 			for (Draw d : r.draws()) {
-				FinderMode.line(from, Vec3.atCenterOf(d.pos()), d.outline());
+				if (d.outline() >>> 24 != 0) {
+					FinderMode.line(from, Vec3.atCenterOf(d.pos()), d.outline());
+				}
 			}
 		}
 	}
@@ -257,27 +303,27 @@ public final class BlockFinderFeature implements KhoaFeature {
 		List<String> keys = PICKED.get();
 		if (keys != wantedSource) {
 			wantedSource = keys;
-			Set<Block> blocks = new HashSet<>();
-			Set<String> spawnerMobs = new HashSet<>();
-			Set<String> trialMobs = new HashSet<>();
-			Set<String> vaults = new HashSet<>();
+			Map<Block, String> blocks = new HashMap<>();
+			Map<String, String> spawnerMobs = new HashMap<>();
+			Map<String, String> trialMobs = new HashMap<>();
+			Map<String, String> vaults = new HashMap<>();
 			for (String key : keys) {
 				int colon = key.indexOf(':');
 				String kind = colon < 0 ? PickData.BLOCK : key.substring(0, colon);
 				String value = key.substring(colon + 1);
 				switch (kind) {
-					case PickData.SPAWNER -> spawnerMobs.add(value);
-					case PickData.TRIAL -> trialMobs.add(value);
-					case PickData.VAULT -> vaults.add(value);
+					case PickData.SPAWNER -> spawnerMobs.put(value, key);
+					case PickData.TRIAL -> trialMobs.put(value, key);
+					case PickData.VAULT -> vaults.put(value, key);
 					default -> {
 						Identifier id = Identifier.tryParse(value);
 						if (id != null) {
-							BuiltInRegistries.BLOCK.getOptional(id).ifPresent(blocks::add);
+							BuiltInRegistries.BLOCK.getOptional(id).ifPresent(block -> blocks.put(block, key));
 						}
 					}
 				}
 			}
-			Set<Block> candidates = new HashSet<>(blocks);
+			Set<Block> candidates = new HashSet<>(blocks.keySet());
 			if (!spawnerMobs.isEmpty()) {
 				candidates.add(Blocks.SPAWNER);
 			}
@@ -292,7 +338,8 @@ public final class BlockFinderFeature implements KhoaFeature {
 		return wantedCache;
 	}
 
-	private record Hit(long pos, BlockState state, double distSq) {
+	/** {@code color} = the overlay colour chosen in the pick's Advanced Setting, null = the automatic colour. */
+	private record Hit(long pos, BlockState state, double distSq, Integer color) {
 	}
 
 	/** Nearest {@link #limit()} matching blocks within the scan radius (bounded max-heap), then their colours and merged outline edges. */
@@ -335,14 +382,19 @@ public final class BlockFinderFeature implements KhoaFeature {
 								double dy = y + 0.5 - center.getY();
 								double dz = z + 0.5 - center.getZ();
 								double d = dx * dx + dy * dy + dz * dz;
-								if (d > rSq || !wanted.matches(state, chunk, m.set(x, y, z))) {
+								if (d > rSq) {
 									continue;
 								}
+								String picked = wanted.match(state, chunk, m.set(x, y, z));
+								if (picked == null) {
+									continue;
+								}
+								Integer color = PICKED.advanced(picked).rgb();
 								if (heap.size() < limit) {
-									heap.add(new Hit(m.set(x, y, z).asLong(), state, d));
+									heap.add(new Hit(m.set(x, y, z).asLong(), state, d, color));
 								} else if (d < heap.peek().distSq()) {
 									heap.poll();
-									heap.add(new Hit(m.set(x, y, z).asLong(), state, d));
+									heap.add(new Hit(m.set(x, y, z).asLong(), state, d, color));
 								}
 							}
 						}
@@ -354,14 +406,19 @@ public final class BlockFinderFeature implements KhoaFeature {
 			return Result.EMPTY;
 		}
 		boolean texture = textureColor();
+		int fillAlpha = alpha(fillTransparency());
+		int outlineAlpha = alpha(outlineTransparency());
 		Map<BlockState, Integer> rgbOf = new HashMap<>();
 		Map<Long, Block> typeAt = new HashMap<>();
 		List<Draw> draws = new ArrayList<>(heap.size());
 		List<BlockPos> positions = new ArrayList<>(heap.size());
 		for (Hit h : heap) {
-			int rgb = rgbOf.computeIfAbsent(h.state(), st -> texture ? KhoaBlockColor.averageRgb(st) : FALLBACK_RGB);
+			int rgb = h.color() != null ? h.color()
+				: rgbOf.computeIfAbsent(h.state(), st -> texture ? KhoaBlockColor.averageRgb(st) : FALLBACK_RGB);
 			BlockPos pos = BlockPos.of(h.pos());
-			draws.add(new Draw(pos, rgb, (FILL_ALPHA << 24) | rgb, 0xFF000000 | KhoaBlockColor.brighten(rgb, OUTLINE_BRIGHTEN)));
+			// a chosen colour is used exactly as it is; the automatic one gets a brighter outline
+			int line = h.color() != null ? rgb : KhoaBlockColor.brighten(rgb, OUTLINE_BRIGHTEN);
+			draws.add(new Draw(pos, rgb, (outlineAlpha << 24) | (line & 0xFFFFFF)));
 			positions.add(pos);
 			typeAt.put(h.pos(), h.state().getBlock());
 		}
@@ -369,16 +426,19 @@ public final class BlockFinderFeature implements KhoaFeature {
 		BlockPos.MutableBlockPos nb = new BlockPos.MutableBlockPos();
 		for (Hit h : heap) {
 			BlockPos pos = BlockPos.of(h.pos());
-			int[] faceRgb = texture ? KhoaBlockColor.faceColors(h.state()) : null;
+			if (fillAlpha == 0) {
+				break; // fully transparent: no faces to draw
+			}
+			int[] faceRgb = texture && h.color() == null ? KhoaBlockColor.faceColors(h.state()) : null;
 			for (Direction d : Direction.values()) {
 				if (typeAt.get(nb.setWithOffset(pos, d).asLong()) == h.state().getBlock()) {
 					continue; // covered by a neighbour of the same type
 				}
-				int rgb = faceRgb == null ? FALLBACK_RGB : faceRgb[d.get3DDataValue()];
-				faces.add(new Face(pos.getX(), pos.getY(), pos.getZ(), d, GizmoStyle.fill((FILL_ALPHA << 24) | rgb)));
+				int rgb = h.color() != null ? h.color() : faceRgb == null ? FALLBACK_RGB : faceRgb[d.get3DDataValue()];
+				faces.add(new Face(pos.getX(), pos.getY(), pos.getZ(), d, GizmoStyle.fill((fillAlpha << 24) | (rgb & 0xFFFFFF))));
 			}
 		}
-		return new Result(draws, edgesOf(draws, typeAt), positions, List.copyOf(faces));
+		return new Result(draws, outlineAlpha == 0 ? List.of() : edgesOf(draws, typeAt), positions, List.copyOf(faces));
 	}
 
 	/**

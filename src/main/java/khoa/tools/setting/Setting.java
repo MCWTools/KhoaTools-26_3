@@ -52,6 +52,10 @@ public final class Setting {
 	public int maxPicks;
 	/** ITEM_LIST only: when set, the picker lists only the items this accepts. */
 	public java.util.function.Predicate<net.minecraft.world.item.ItemStack> stackFilter;
+	/** ITEM_LIST only: when set, shift + double click on a card in the picker opens "Advanced Setting" for it (see {@link #advanced}). */
+	public PickAdvanced.Store advancedStore;
+	/** ITEM_LIST only: the Advanced Setting screen also offers an overlay colour. */
+	public boolean advancedColor;
 	public String pickerToggleLabel = "";
 	public String pickerToggleHint = "";
 	private BooleanSupplier pickerToggleGet;
@@ -197,6 +201,16 @@ public final class Setting {
 	/** Shows only the items accepted by {@code filter} in the picker of this row (ITEM_LIST only). Returns this setting. */
 	public Setting stackFilter(java.util.function.Predicate<net.minecraft.world.item.ItemStack> filter) {
 		this.stackFilter = filter;
+		return this;
+	}
+
+	/**
+	 * Gives the picks of this row an "Advanced Setting" (shift + double click): a Y level range and, when {@code color}, an overlay colour.
+	 * Returns this setting.
+	 */
+	public Setting advanced(PickAdvanced.Store store, boolean color) {
+		this.advancedStore = store;
+		this.advancedColor = color;
 		return this;
 	}
 

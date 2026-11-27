@@ -134,6 +134,17 @@ public final class KhoaConfig {
 		return out;
 	}
 
+	/** A copy of the object stored under {@code key} (empty when there is none). */
+	public static synchronized JsonObject getObject(String sectionName, String key) {
+		JsonElement e = section(sectionName).get(key);
+		return e != null && e.isJsonObject() ? e.getAsJsonObject().deepCopy() : new JsonObject();
+	}
+
+	public static synchronized void putObject(String sectionName, String key, JsonObject value) {
+		section(sectionName).add(key, value);
+		save();
+	}
+
 	public static synchronized void putStringList(String sectionName, String key, java.util.List<String> value) {
 		com.google.gson.JsonArray array = new com.google.gson.JsonArray();
 		for (String v : value) {

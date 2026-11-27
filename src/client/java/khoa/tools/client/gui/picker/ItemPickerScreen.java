@@ -10,6 +10,7 @@ import java.util.Set;
 
 import com.mojang.blaze3d.platform.InputConstants;
 
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.EditBox;
 import net.minecraft.client.gui.components.events.GuiEventListener;
@@ -18,8 +19,10 @@ import net.minecraft.client.input.KeyEvent;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
 
+import khoa.api.picker.ItemCategories;
 import khoa.tools.client.feature.illegal.spawnerfinder.SpawnerLook;
 import khoa.tools.client.gui.picker.PickData.Entry;
+import khoa.tools.setting.PickAdvanced;
 import khoa.tools.setting.Setting;
 
 /**
@@ -47,6 +50,8 @@ public final class ItemPickerScreen extends Screen {
 	private static final int BORDER = 0xFF555555;
 
 	private final Screen parent;
+	private static final int CATEGORY_H = 14;
+
 	private final Setting setting;
 	/** ITEM (items + enchanted books) or BLOCK: fixed by the config row, the user cannot switch. */
 	private final String mode;
@@ -64,6 +69,8 @@ public final class ItemPickerScreen extends Screen {
 
 	private EditBox search;
 	private String query = "";
+	/** Library category id filtering the left list, null = All. */
+	private String category;
 
 	private int frameX;
 	private int frameW;
@@ -91,7 +98,7 @@ public final class ItemPickerScreen extends Screen {
 		frameW = Math.min(this.width - 24, 640);
 		frameX = (this.width - frameW) / 2;
 		panelW = (frameW - 10) / 2;
-		panelTop = TAB_Y + TAB_H + 8;
+		panelTop = TAB_Y + TAB_H + 8 + (categoryIds().isEmpty() ? 0 : CATEGORY_H + 2);
 		contentTop = panelTop + 14;
 		barY = this.height - 34;
 		panelBottom = barY - 6;
@@ -144,6 +151,9 @@ public final class ItemPickerScreen extends Screen {
 			if (setting.stackFilter != null && (e.stack() == null || !setting.stackFilter.test(e.stack()))) {
 				continue;
 			}
+			if (category != null && (e.stack() == null || !ItemCategories.matches(category, e.stack()))) {
+				continue;
+			}
 			if (!chosen.containsKey(e.key()) && (query.isEmpty() || e.search().contains(query))) {
 				avail.add(e);
 			}
@@ -158,6 +168,100 @@ public final class ItemPickerScreen extends Screen {
 		chosenView = picked;
 		scrollAvail = clampScroll(scrollAvail, avail.size());
 		scrollChosen = clampScroll(scrollChosen, picked.size());
+	}
+
+	// ------------------------------------------------------------------ category buttons
+
+	/** Categories offered above the lists (besides "All"): ores for block and item pickers, nothing for spawners / entities. */
+	private List<String> categoryIds() {
+		if (PickData.BLOCK.equals(mode)) {
+			return List.of(ItemCategories.ORE_BLOCKS);
+		}
+		return PickData.ITEM.equals(mode) && setting.stackFilter == null ? List.of(ItemCategories.ORE_ITEMS, ItemCategories.ORE_BLOCKS) : List.of();
+	}
+
+	private static String categoryLabel(String id) {
+		return id == null ? "All" : ItemCategories.ORE_ITEMS.equals(id) ? "Ore Items" : "Ore Blocks";
+	}
+
+	/** {x, y, w} of every category button in order, All first; empty when this picker has no categories. */
+	List<int[]> categoryButtons() {
+		List<String> ids = categoryIds();
+		List<int[]> out = new ArrayList<>();
+		int x = frameX;
+		for (int i = 0; !ids.isEmpty() && i <= ids.size(); i++) {
+			int w = this.font.width(categoryLabel(i == 0 ? null : ids.get(i - 1))) + 16;
+			out.add(new int[] { x, TAB_Y + TAB_H + 4, w });
+			x += w + 4;
+		}
+		return out;
+	}
+
+	private void selectCategory(String id) {
+		category = id;
+		scrollAvail = 0;
+		selected.clear();
+		anchor = -1;
+		rebuildViews();
+	}
+
+	private void renderCategories(GuiGraphicsExtractor g, int mouseX, int mouseY) {
+		List<int[]> buttons = categoryButtons();
+		for (int i = 0; i < buttons.size(); i++) {
+			int[] b = buttons.get(i);
+			String id = i == 0 ? null : categoryIds().get(i - 1);
+			boolean active = java.util.Objects.equals(id, category);
+			boolean hover = inside(mouseX, mouseY, b[0], b[1], b[2], CATEGORY_H);
+			g.fill(b[0], b[1], b[0] + b[2], b[1] + CATEGORY_H, active ? BG_SELECTED : (hover ? BG_CARD_HOVER : BG_CARD));
+			border(g, b[0], b[1], b[0] + b[2], b[1] + CATEGORY_H, active ? COL_BLUE : BORDER);
+			g.centeredText(this.font, categoryLabel(id), b[0] + b[2] / 2, b[1] + 3, active ? COL_TEXT : COL_DIM);
+		}
+	}
+
+	// ------------------------------------------------------------------ hooks for the in-game self test
+
+	List<String> keys(boolean chosenSide) {
+		return (chosenSide ? chosenView : availView).stream().map(Entry::key).toList();
+	}
+
+	/** Scrolls a card into view and returns its centre, or null when that list does not show it. */
+	double[] reveal(boolean chosenSide, String key) {
+		int index = keys(chosenSide).indexOf(key);
+		if (index < 0) {
+			return null;
+		}
+		double scroll = clampScroll((index / cols()) * (CARD_H + GAP), (chosenSide ? chosenView : availView).size());
+		if (chosenSide) {
+			scrollChosen = scroll;
+		} else {
+			scrollAvail = scroll;
+		}
+		return new double[] { panelX(chosenSide) + 4 + (index % cols()) * (cardW() + GAP) + cardW() / 2.0,
+			contentTop - scroll + (index / cols()) * (CARD_H + GAP) + CARD_H / 2.0 };
+	}
+
+	// ------------------------------------------------------------------ Advanced Setting
+
+	/** Shift + double click: edit the Y level range / overlay colour of one entry; a new entry is only added when confirmed. */
+	private void openAdvanced(Entry entry) {
+		boolean isNew = !chosen.containsKey(entry.key());
+		PickAdvanced current = isNew ? PickAdvanced.DEFAULT : setting.advancedStore.advanced(entry.key());
+		this.minecraft.gui.setScreen(new AdvancedPickScreen(this, entry, current, setting.advancedColor, isNew, value -> {
+			chosen.put(entry.key(), entry);
+			trimToMaxPicks();
+			selected.clear();
+			anchor = -1;
+			save(); // the list first: saving it drops the options of entries that are not in it
+			setting.advancedStore.setAdvanced(entry.key(), value);
+		}));
+	}
+
+	private void trimToMaxPicks() {
+		if (setting.maxPicks > 0) { // keep only the newest picks
+			while (chosen.size() > setting.maxPicks) {
+				chosen.remove(chosen.keySet().iterator().next());
+			}
+		}
 	}
 
 	private int cols() {
@@ -236,11 +340,7 @@ public final class ItemPickerScreen extends Screen {
 				chosen.put(e.key(), e);
 			}
 		}
-		if (setting.maxPicks > 0) { // keep only the newest picks
-			while (chosen.size() > setting.maxPicks) {
-				chosen.remove(chosen.keySet().iterator().next());
-			}
-		}
+		trimToMaxPicks();
 		selected.clear();
 		anchor = -1;
 		rebuildViews();
@@ -297,6 +397,13 @@ public final class ItemPickerScreen extends Screen {
 		double mx = event.x();
 		double my = event.y();
 
+		List<int[]> buttons = categoryButtons();
+		for (int i = 0; i < buttons.size(); i++) {
+			if (inside(mx, my, buttons.get(i)[0], buttons.get(i)[1], buttons.get(i)[2], CATEGORY_H)) {
+				selectCategory(i == 0 ? null : categoryIds().get(i - 1));
+				return true;
+			}
+		}
 		if (inside(mx, my, removeAllX(), barY, 90, BAR_H)) {
 			removeAll();
 			return true;
@@ -332,6 +439,10 @@ public final class ItemPickerScreen extends Screen {
 			selected.clear();
 			anchor = -1;
 			selectionInChosen = side;
+		}
+		if (doubleClick && shift && !ctrl && setting.advancedStore != null) {
+			openAdvanced(entry);
+			return;
 		}
 		if (doubleClick && !ctrl && !shift) {
 			if (!selected.contains(entry.key())) {
@@ -422,16 +533,37 @@ public final class ItemPickerScreen extends Screen {
 			}
 		}
 		renderBar(g, mouseX, mouseY);
-		g.text(this.font, "Click: select   Shift: range   Ctrl: toggle   Double click: add / remove   Ctrl+A: all   Esc: back",
+		g.text(this.font, setting.advancedStore != null
+			? "Double click: add/remove   Shift+double click: Advanced Setting   Esc: back"
+			: "Click: select   Shift: range   Ctrl: toggle   Double click: add / remove   Ctrl+A: all   Esc: back",
 			frameX, this.height - 10, COL_DIM);
+		renderCategories(g, mouseX, mouseY);
 
 		super.extractRenderState(g, mouseX, mouseY, partialTick); // the search box
 		if (setting.hasPickerToggle()) {
 			renderToggle(g, mouseX, mouseY);
 		}
 		if (hovered != null) {
-			g.setComponentTooltipForNextFrame(this.font, hovered.tooltip(), mouseX, mouseY);
+			g.setComponentTooltipForNextFrame(this.font, tooltip(hovered), mouseX, mouseY);
 		}
+	}
+
+	private List<Component> tooltip(Entry e) {
+		if (setting.advancedStore == null) {
+			return e.tooltip();
+		}
+		List<Component> lines = new ArrayList<>(e.tooltip());
+		if (chosen.containsKey(e.key())) {
+			PickAdvanced a = setting.advancedStore.advanced(e.key());
+			lines.add(Component.literal("Y level: " + (a.minY() == null ? "world bottom" : a.minY()) + " to " + (a.maxY() == null ? "height limit" : a.maxY()))
+				.withStyle(ChatFormatting.AQUA));
+			if (setting.advancedColor && a.rgb() != null) {
+				int c = a.rgb();
+				lines.add(Component.literal("Colour: R " + (c >> 16 & 255) + "  G " + (c >> 8 & 255) + "  B " + (c & 255)).withStyle(ChatFormatting.AQUA));
+			}
+		}
+		lines.add(Component.literal("Shift + double click: Advanced Setting").withStyle(ChatFormatting.DARK_GRAY));
+		return lines;
 	}
 
 	/** Draws one list; returns the card under the mouse (for the tooltip). */
@@ -474,6 +606,14 @@ public final class ItemPickerScreen extends Screen {
 					g.fill(x + 3, y + 2, x + 10, y + 9, SpawnerLook.OUTLINE);
 					g.fill(x + 4, y + 3, x + 9, y + 8, mark);
 				}
+			}
+			PickAdvanced a = chosenSide && setting.advancedStore != null ? setting.advancedStore.advanced(e.key()) : PickAdvanced.DEFAULT;
+			if (setting.advancedColor && a.rgb() != null) { // custom overlay colour
+				g.fill(x + cw - 10, y + 3, x + cw - 3, y + 10, COL_TEXT);
+				g.fill(x + cw - 9, y + 4, x + cw - 4, y + 9, 0xFF000000 | a.rgb());
+			}
+			if (a.minY() != null || a.maxY() != null) { // custom Y level range
+				g.text(this.font, "Y", x + cw - 9, y + CARD_H - 10, 0xFF55FFFF);
 			}
 			int textW = cw - 28 - (chosenSide ? 10 : 0);
 			g.text(this.font, this.font.plainSubstrByWidth(e.name(), textW), x + 24, y + (CARD_H - 8) / 2, COL_TEXT);

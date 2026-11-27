@@ -1,6 +1,7 @@
 package khoa.tools.client.feature.autoclicker;
 
 import java.util.List;
+import java.util.concurrent.ThreadLocalRandom;
 
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 
@@ -63,6 +64,8 @@ public final class AutoClickerFeature implements KhoaFeature {
 				}),
 			Setting.integer("interval_ms", "Interval (ms)", "Time between clicks in milliseconds (real time). Below 50 ms several clicks are sent in the same game tick.",
 				1, 3_600_000, () -> KhoaConfig.getInt(id, "interval_ms", 500), v -> KhoaConfig.put(id, "interval_ms", v)),
+			Setting.integer("random_ms", "Randomness (ms)", "Random extra delay added to every interval (never subtracted). Interval 700 + randomness 500 = each wait is random between 700 and 1200 ms. 0 = fixed interval.",
+				0, 3_600_000, () -> KhoaConfig.getInt(id, "random_ms", 0), v -> KhoaConfig.put(id, "random_ms", v)),
 			Setting.integer("hold_ms", "Hold time (ms)", "How long the button is held per click, in milliseconds. 0 = a single click. The interval starts after the hold ends.",
 				0, 3_600_000, () -> KhoaConfig.getInt(id, "hold_ms", 0), v -> KhoaConfig.put(id, "hold_ms", v)),
 			Setting.integer("lock_slot", "Lock hotbar slot", "Keeps this hotbar slot selected while the clicker is on. 0 = disabled.",
@@ -112,6 +115,14 @@ public final class AutoClickerFeature implements KhoaFeature {
 		phase = Phase.WAIT;
 	}
 
+	/** Base interval plus a random 0..randomness extra (only adds, never subtracts), in nanoseconds. */
+	private static long nextInterval() {
+		long base = Math.max(1, KhoaConfig.getInt("autoclicker", "interval_ms", 500));
+		long random = Math.max(0, KhoaConfig.getInt("autoclicker", "random_ms", 0));
+		long extra = random > 0 ? ThreadLocalRandom.current().nextLong(random + 1) : 0;
+		return (base + extra) * 1_000_000L;
+	}
+
 	private static void click(KeyMapping key) {
 		KeyMappingAccessor acc = (KeyMappingAccessor) key;
 		acc.khoa$setClickCount(acc.khoa$getClickCount() + 1);
@@ -139,14 +150,13 @@ public final class AutoClickerFeature implements KhoaFeature {
 			deadline = now; // first click right away after turning on / closing a menu
 		}
 		KeyMapping key = key(mc);
-		long interval = Math.max(1, KhoaConfig.getInt("autoclicker", "interval_ms", 500)) * 1_000_000L;
 		long hold = Math.max(0, KhoaConfig.getInt("autoclicker", "hold_ms", 0)) * 1_000_000L;
 		if (phase == Phase.HOLD) {
 			key.setDown(true);
 			if (now - deadline >= 0) {
 				key.setDown(false);
 				phase = Phase.WAIT;
-				deadline = now + interval; // the interval starts only now, after the hold
+				deadline = now + nextInterval(); // the interval starts only now, after the hold
 			}
 			return;
 		}
@@ -164,10 +174,10 @@ public final class AutoClickerFeature implements KhoaFeature {
 		while (now - deadline >= 0 && clicks < MAX_CLICKS_PER_TICK) { // catch up: short intervals send several clicks per tick
 			click(key);
 			clicks++;
-			deadline += interval;
+			deadline += nextInterval();
 		}
 		if (now - deadline >= 0) {
-			deadline = now + interval; // far behind (lag spike): do not burst afterwards
+			deadline = now + nextInterval(); // far behind (lag spike): do not burst afterwards
 		}
 	}
 }

@@ -69,8 +69,8 @@ public final class BlockLogFeature implements KhoaFeature {
 
 	@Override
 	public java.util.List<khoa.tools.setting.Setting> settings() {
-		return java.util.List.of(FILTER.setting("Only these blocks", "Empty = log every block. Otherwise only breaks / places of the blocks in this list are written.",
-			java.util.List.of("block")));
+		return java.util.List.of(FILTER.setting("Only these blocks", "Empty = log every block. Otherwise only breaks / places of the blocks in this list are written. Shift + double click: Advanced Setting (Y level).",
+			java.util.List.of("block")).advanced(FILTER, false));
 	}
 
 	@Override
@@ -115,7 +115,7 @@ public final class BlockLogFeature implements KhoaFeature {
 		if (writer == null || oldState.getBlock() == newState.getBlock()) {
 			return; // not recording, or only a block-state change (door opened, redstone...)
 		}
-		if (!FILTER.isEmpty() && !FILTER.matchesBlock(oldState.getBlock()) && !FILTER.matchesBlock(newState.getBlock())) {
+		if (!FILTER.isEmpty() && !FILTER.matchesBlock(oldState.getBlock(), pos.getY()) && !FILTER.matchesBlock(newState.getBlock(), pos.getY())) {
 			return; // filtered out by the "Only these blocks" list
 		}
 		PENDING.add(new Pending(pos.immutable(), oldState, newState, tickCounter, LocalDateTime.now()));

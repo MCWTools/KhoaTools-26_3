@@ -65,6 +65,7 @@ public final class SpawnerFinderFeature implements KhoaFeature {
 	private static Set<String> pickedSet = Set.of();
 	private static List<SpawnerScanner.Info> filteredFrom;
 	private static List<String> filteredPicks;
+	private static Object filteredOptions;
 	private static List<SpawnerScanner.Info> filteredCache = List.of();
 
 	@Override
@@ -107,8 +108,9 @@ public final class SpawnerFinderFeature implements KhoaFeature {
 	@Override
 	public List<Setting> settings() {
 		return List.of(
-			Setting.itemList("picked", "Spawners", "Which spawners and trial spawners are highlighted. Empty = every spawner.", List.of("spawner"),
+			Setting.itemList("picked", "Spawners", "Which spawners and trial spawners are highlighted. Shift + double click: Advanced Setting (Y level, colour). Empty = every spawner.", List.of("spawner"),
 				PICKED::get, PICKED::set)
+				.advanced(PICKED, true)
 				.pickerToggle("Vanilla", "On: the picker lists only the mobs vanilla has spawners for. Off: every mob in the game (for servers with custom spawners).",
 					SpawnerFinderFeature::vanillaPicker, v -> KhoaConfig.put(ID, "vanilla_picker", v)),
 			FinderMode.setting(ID),
@@ -152,6 +154,11 @@ public final class SpawnerFinderFeature implements KhoaFeature {
 		return on;
 	}
 
+	/** The overlay colour chosen in this spawner's Advanced Setting, null = the normal look. */
+	static Integer overrideColor(SpawnerScanner.Info s) {
+		return PICKED.advanced(s.pickKey()).rgb();
+	}
+
 	static boolean vanillaPicker() {
 		return KhoaConfig.getBool(ID, "vanilla_picker", true);
 	}
@@ -176,7 +183,8 @@ public final class SpawnerFinderFeature implements KhoaFeature {
 	static synchronized List<SpawnerScanner.Info> filtered() {
 		List<String> picks = PICKED.get();
 		List<SpawnerScanner.Info> found = SpawnerScanner.found();
-		if (found == filteredFrom && picks == filteredPicks) {
+		Object options = PICKED.advancedVersion();
+		if (found == filteredFrom && picks == filteredPicks && options == filteredOptions) {
 			return filteredCache;
 		}
 		if (picks != pickedSource) {
@@ -189,13 +197,14 @@ public final class SpawnerFinderFeature implements KhoaFeature {
 		} else {
 			out = new ArrayList<>();
 			for (SpawnerScanner.Info s : found) {
-				if (pickedSet.contains(s.pickKey())) {
+				if (pickedSet.contains(s.pickKey()) && PICKED.advanced(s.pickKey()).allowsY(s.pos().getY())) {
 					out.add(s);
 				}
 			}
 		}
 		filteredFrom = found;
 		filteredPicks = picks;
+		filteredOptions = options;
 		filteredCache = out;
 		return out;
 	}
