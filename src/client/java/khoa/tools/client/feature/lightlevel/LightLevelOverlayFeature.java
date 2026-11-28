@@ -1,7 +1,12 @@
 package khoa.tools.client.feature.lightlevel;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 
@@ -14,39 +19,37 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.core.BlockPos;
-import net.minecraft.core.Direction;
 import net.minecraft.gizmos.GizmoStyle;
 import net.minecraft.gizmos.Gizmos;
 import net.minecraft.util.ARGB;
-import net.minecraft.world.level.LightLayer;
-import net.minecraft.world.level.block.state.BlockState;
-import net.minecraft.world.level.lighting.LayerLightEventListener;
 import net.minecraft.world.phys.Vec3;
 
+import khoa.tools.KhoaTools;
 import khoa.tools.client.config.KhoaConfig;
 import khoa.tools.client.feature.KhoaFeature;
 import khoa.tools.setting.Setting;
 
 /**
  * Light Level Overlay: paints red every surface (top of a solid block with free space above it) whose BLOCK light
- * level is at or below the slider. Sky light is ignored. Rebuilt on every block update, light update and when you move.
+ * level is at or below the slider, between Min Y and Max Y and within the chunk distance around you. Sky light is
+ * ignored. Rescanned (off the client thread) on every block update, light update and when you enter another chunk.
  */
 public final class LightLevelOverlayFeature implements KhoaFeature {
 	private static final String ID = "lightlevel";
-	private static final int MIN_RANGE = 16;
-	private static final int MAX_RANGE = 48;
-	/** Vertical scan radius is at most this (the horizontal radius is the Display Range). */
-	private static final int MAX_VERTICAL = 16;
-	/** Most surfaces drawn at once (each one is a quad). */
-	private static final int MAX_CELLS = 20000;
+	private static final int MAX_DISTANCE = 8;
+	private static final int DEFAULT_DISTANCE = 2;
+	private static final int DEFAULT_MIN_Y = 60;
+	private static final int DEFAULT_MAX_Y = 320;
+	/** Most surfaces drawn at once (each one is a quad); the nearest ones win. */
+	private static final int MAX_CELLS = 30000;
 	/** Lifts the red overlay off the block so it does not flicker against it. */
 	private static final double LIFT = 0.003;
-	/** After a block / light update, keep rebuilding this many ticks so the light engine can catch up. */
+	/** After a block / light update, scan once more this many ticks later so the light engine can catch up. */
 	private static final int SETTLE_TICKS = 4;
-	/** Never rebuild more often than every this many ticks. */
-	private static final int MIN_INTERVAL = 2;
-	/** Rebuild when you moved at least this far (blocks) from where the overlay was built. */
-	private static final int MOVE_DISTANCE = 3;
+	/** Never start scans closer together than this. */
+	private static final int MIN_INTERVAL = 4;
+	/** The area follows you to another chunk only once you are this many blocks into it (no flicker on the border). */
+	private static final int CHUNK_MARGIN = 3;
 
 	private static final GizmoStyle STYLE = GizmoStyle.fill(ARGB.color(110, 255, 40, 40));
 
@@ -61,16 +64,30 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 	private record Cell(Vec3 p0, Vec3 p1, Vec3 p2, Vec3 p3, double y) {
 	}
 
+	private record Scan(LightScan.Snapshot snapshot, List<Cell> cells, long millis) {
+	}
+
 	private final LightPlanController planner = new LightPlanController();
+	private final ExecutorService scanner = Executors.newSingleThreadExecutor(task -> {
+		Thread thread = new Thread(task, "KhoaTools light scan");
+		thread.setDaemon(true);
+		thread.setPriority(Thread.NORM_PRIORITY - 1);
+		return thread;
+	});
 	private boolean on;
 	private List<Cell> cells = List.of();
-	private boolean needsRebuild;
+	private Future<Scan> job;
+	private boolean needsScan;
 	private int settle;
-	private int sinceRebuild;
+	private int sinceScan;
 	private ClientLevel level;
-	private BlockPos builtAt = BlockPos.ZERO;
-	private int builtLevel = -1;
-	private int builtRange = -1;
+	private LightScan.Area area;
+	private LightScan.Settings scanned;
+	private int chunkX;
+	private int chunkZ;
+	private boolean wasPlanning;
+	private long copyMillis;
+	private long scanMillis;
 
 	/** Called from the mixins: something changed that can change light or surfaces. */
 	public static void markDirty() {
@@ -89,7 +106,7 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 
 	@Override
 	public String description() {
-		return "Paints red every surface whose block light level is at or below the slider (sky light is ignored). Updates on every block / light update and when you move. Optimal placement marks (cyan, nearest one yellow) where to put as few light sources as possible so that nothing stays red; the number is how many red surfaces that source fixes.";
+		return "Paints red every surface whose block light level is at or below the slider (sky light is ignored). Only between Min Y and Max Y, within Distance chunks around you. Optimal placement marks (cyan, nearest one yellow) where to put as few light sources as possible so that nothing stays red; the number is how many red surfaces that source fixes.";
 	}
 
 	@Override
@@ -102,15 +119,16 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 		return List.of(
 			Setting.slider("level", "Red light level", "Surfaces with block light level at or below this get the red overlay (0 - 15).", 0, 15,
 				LightLevelOverlayFeature::threshold, v -> KhoaConfig.put(ID, "level", v)),
-			Setting.slider("range", "Display range", "How many blocks around you are scanned (horizontal radius, min 16). Vertical range is limited to 16. Bigger = more lag.", MIN_RANGE, MAX_RANGE,
-				LightLevelOverlayFeature::range, v -> KhoaConfig.put(ID, "range", v)),
+			Setting.pair("y_range", "Min Y / Max Y", "Only surfaces whose free block is between these two heights are shown and planned.",
+				"Min Y", LightLevelOverlayFeature::minY, v -> KhoaConfig.put(ID, "min_y", (int) v),
+				"Max Y", LightLevelOverlayFeature::maxY, v -> KhoaConfig.put(ID, "max_y", (int) v)),
+			Setting.slider("distance", "Distance (chunks)", "Chunks around your chunk that are shown and planned (2 = 5 x 5 chunks). Bigger = slower.", 1, MAX_DISTANCE,
+				LightLevelOverlayFeature::distance, v -> KhoaConfig.put(ID, "distance", v)),
 			Setting.bool("plan", "Optimal placement", "Mark where to place light sources so that every surface gets brighter than the red light level, using as few as possible.",
 				LightLevelOverlayFeature::planning, v -> KhoaConfig.put(ID, "plan", v)),
 			Setting.dropdown("plan_source", "Light source", "The light source Optimal placement plans for.", SOURCES,
 				LightLevelOverlayFeature::source, v -> KhoaConfig.put(ID, "plan_source", v)),
-			Setting.slider("plan_height", "Plan height", "Optimal placement only handles surfaces within this many blocks above and below you (keeps caves under your base out of the plan).", 1, MAX_VERTICAL,
-				LightLevelOverlayFeature::planHeight, v -> KhoaConfig.put(ID, "plan_height", v)),
-			Setting.action("plan_again", "Recalculate", "Throw the current plan away and make a new one for the whole area.", "Recalculate", planner::reset));
+			Setting.action("plan_again", "Recalculate", "Throw the current plan away and make a new one for the whole area.", "Recalculate", planner::restart));
 	}
 
 	static boolean planning() {
@@ -121,8 +139,30 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 		return Math.max(0, Math.min(SOURCES.size() - 1, KhoaConfig.getInt(ID, "plan_source", 0)));
 	}
 
-	private static int planHeight() {
-		return Math.max(1, Math.min(MAX_VERTICAL, KhoaConfig.getInt(ID, "plan_height", 6)));
+	private static int minY() {
+		return KhoaConfig.getInt(ID, "min_y", DEFAULT_MIN_Y);
+	}
+
+	private static int maxY() {
+		return KhoaConfig.getInt(ID, "max_y", DEFAULT_MAX_Y);
+	}
+
+	private static int distance() {
+		return Math.max(1, Math.min(MAX_DISTANCE, KhoaConfig.getInt(ID, "distance", DEFAULT_DISTANCE)));
+	}
+
+	/** Nothing is waiting to be scanned or planned. */
+	boolean idle() {
+		return !needsScan && settle == 0 && job == null && (!planning() || planner.idle());
+	}
+
+	/** Client thread time of the last chunk copy, and worker times of the last scan and plan. */
+	String timings() {
+		return "copy " + copyMillis + " ms on the game thread, scan " + scanMillis + " ms, plan " + planner.planMillis() + " ms";
+	}
+
+	int shownCells() {
+		return cells.size();
 	}
 
 	LightPlanController planner() {
@@ -152,21 +192,25 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 		return Math.max(0, Math.min(15, KhoaConfig.getInt(ID, "level", 0)));
 	}
 
-	private static int range() {
-		return Math.max(MIN_RANGE, Math.min(MAX_RANGE, KhoaConfig.getInt(ID, "range", MIN_RANGE)));
-	}
-
 	@Override
 	public void activate(Minecraft mc) {
 		on = !on;
-		cells = List.of();
-		needsRebuild = on;
-		settle = 0;
-		sinceRebuild = MIN_INTERVAL;
-		builtLevel = -1;
-		builtRange = -1;
-		planner.reset();
+		reset();
 		KhoaFeature.say(mc, "Light Level Overlay: " + (on ? "on (block light <= " + threshold() + ")" : "off"));
+	}
+
+	private void reset() {
+		cells = List.of();
+		if (job != null) {
+			job.cancel(true);
+			job = null;
+		}
+		area = null;
+		scanned = null;
+		needsScan = false;
+		settle = 0;
+		sinceScan = MIN_INTERVAL;
+		planner.clear();
 	}
 
 	@Override
@@ -183,108 +227,123 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 			dirty = false;
 			return;
 		}
-		if (mc.level == null || mc.player == null) {
-			cells = List.of();
-			level = null;
-			planner.reset();
-			return;
-		}
 		if (level != mc.level) {
 			level = mc.level;
-			cells = List.of();
-			needsRebuild = true;
+			reset();
 		}
-
-		if (dirty) {
-			dirty = false;
-			planner.worldChanged();
-			settle = SETTLE_TICKS;
-			needsRebuild = true;
-		} else if (settle > 0) {
-			settle--;
-			needsRebuild = true;
+		if (mc.level == null || mc.player == null) {
+			return;
 		}
 
 		BlockPos here = mc.player.blockPosition();
-		if (Math.abs(here.getX() - builtAt.getX()) >= MOVE_DISTANCE || Math.abs(here.getY() - builtAt.getY()) >= MOVE_DISTANCE
-			|| Math.abs(here.getZ() - builtAt.getZ()) >= MOVE_DISTANCE || threshold() != builtLevel || range() != builtRange) {
-			needsRebuild = true;
+		if (area == null || left(here.getX(), chunkX)) {
+			chunkX = here.getX() >> 4;
+		}
+		if (area == null || left(here.getZ(), chunkZ)) {
+			chunkZ = here.getZ() >> 4;
+		}
+		int distance = distance();
+		int bottom = mc.level.getMinY();
+		int top = bottom + mc.level.getHeight() - 1;
+		int low = Math.max(bottom, Math.min(top, Math.min(minY(), maxY())));
+		int high = Math.max(bottom, Math.min(top, Math.max(minY(), maxY())));
+		LightScan.Area wantedArea = new LightScan.Area((chunkX - distance) << 4, ((chunkX + distance) << 4) + 15, (chunkZ - distance) << 4,
+			((chunkZ + distance) << 4) + 15, low, high);
+		int source = source();
+		LightScan.Settings wanted = new LightScan.Settings(EMISSION[source], source == FULL_BLOCK, threshold());
+		boolean planning = planning();
+		if (!wantedArea.equals(area) || !wanted.equals(scanned) || planning != wasPlanning) {
+			area = wantedArea;
+			scanned = wanted;
+			wasPlanning = planning;
+			needsScan = true;
+			if (!planning) {
+				planner.clear();
+			}
+		}
+		if (dirty) {
+			dirty = false;
+			needsScan = true;
+			settle = SETTLE_TICKS;
+		} else if (settle > 0 && --settle == 0) {
+			needsScan = true;
 		}
 
-		if (sinceRebuild < MIN_INTERVAL) {
-			sinceRebuild++;
-		}
-		if (needsRebuild && sinceRebuild >= MIN_INTERVAL) {
-			rebuild(mc, here);
-			needsRebuild = false;
-			sinceRebuild = 0;
+		if (job != null && job.isDone()) {
+			try {
+				Scan scan = job.get();
+				cells = scan.cells();
+				scanMillis = scan.millis();
+				if (planning && scan.snapshot().area().equals(area) && scan.snapshot().settings().equals(scanned)) {
+					planner.offer(scan.snapshot());
+				}
+			} catch (InterruptedException e) {
+				Thread.currentThread().interrupt();
+			} catch (ExecutionException e) {
+				KhoaTools.LOGGER.error("Light overlay scan failed ({})", area, e.getCause());
+			}
+			job = null;
 		}
 
-		if (planning()) {
-			int source = source();
-			planner.tick(mc, new LightPlan.Settings(EMISSION[source], source == FULL_BLOCK, threshold()), range(), planHeight());
-		} else {
-			planner.reset();
+		if (sinceScan < MIN_INTERVAL) {
+			sinceScan++;
+		}
+		if (needsScan && job == null && sinceScan >= MIN_INTERVAL) {
+			long start = System.nanoTime();
+			LightScan.Copy copy = LightScan.copy(mc.level, area);
+			copyMillis = (System.nanoTime() - start) / 1_000_000;
+			LightScan.Settings settings = scanned;
+			Vec3 from = mc.player.position();
+			job = scanner.submit(() -> {
+				long begin = System.nanoTime();
+				LightScan.Snapshot snapshot = LightScan.scan(copy, settings);
+				List<Cell> out = cells(snapshot.dark(), from);
+				return new Scan(snapshot, out, (System.nanoTime() - begin) / 1_000_000);
+			});
+			needsScan = false;
+			sinceScan = 0;
+		}
+
+		if (planning) {
+			planner.tick(mc);
 		}
 	}
 
-	private void rebuild(Minecraft mc, BlockPos center) {
-		ClientLevel world = mc.level;
-		if (world == null) {
-			cells = List.of();
-			return;
-		}
-		int threshold = threshold();
-		int r = range();
-		builtAt = center;
-		builtLevel = threshold;
-		builtRange = r;
+	private static boolean left(int position, int chunk) {
+		return position < (chunk << 4) - CHUNK_MARGIN || position > (chunk << 4) + 15 + CHUNK_MARGIN;
+	}
 
-		int minY = world.getMinY();
-		int maxY = minY + world.getHeight() - 1;
-		int v = Math.min(r, MAX_VERTICAL);
-		int y0 = Math.max(minY, center.getY() - v);
-		int y1 = Math.min(maxY - 1, center.getY() + v);
-
-		LayerLightEventListener light = world.getLightEngine().getLayerListener(LightLayer.BLOCK);
-		BlockPos.MutableBlockPos belowPos = new BlockPos.MutableBlockPos();
-		BlockPos.MutableBlockPos abovePos = new BlockPos.MutableBlockPos();
-		List<Cell> out = new ArrayList<>();
-
-		columns:
-		for (int x = center.getX() - r; x <= center.getX() + r; x++) {
-			for (int z = center.getZ() - r; z <= center.getZ() + r; z++) {
-				if (!world.hasChunk(x >> 4, z >> 4)) {
-					continue;
-				}
-				belowPos.set(x, y0, z);
-				BlockState below = world.getBlockState(belowPos);
-				for (int y = y0; y <= y1; y++) {
-					belowPos.set(x, y, z);
-					abovePos.set(x, y + 1, z);
-					BlockState above = world.getBlockState(abovePos);
-					if (!below.isAir() && isFree(world, above, abovePos) && below.isFaceSturdy(world, belowPos, Direction.UP)
-						&& light.getLightValue(abovePos) <= threshold) {
-						double top = y + 1 + LIFT;
-						// Counter-clockwise as seen from above (draw() flips it when you look from below).
-						out.add(new Cell(new Vec3(x, top, z), new Vec3(x, top, z + 1), new Vec3(x + 1, top, z + 1), new Vec3(x + 1, top, z), top));
-						if (out.size() >= MAX_CELLS) {
-							break columns;
-						}
-					}
-					below = above;
+	/** The quads of the red surfaces, only the ones nearest to the player when there are too many. */
+	private static List<Cell> cells(long[] dark, Vec3 from) {
+		long[] shown = dark;
+		if (dark.length > MAX_CELLS) {
+			double[] distance = new double[dark.length];
+			for (int i = 0; i < dark.length; i++) {
+				double dx = BlockPos.getX(dark[i]) + 0.5 - from.x;
+				double dy = BlockPos.getY(dark[i]) - from.y;
+				double dz = BlockPos.getZ(dark[i]) + 0.5 - from.z;
+				distance[i] = dx * dx + dy * dy + dz * dz;
+			}
+			double[] sorted = distance.clone();
+			Arrays.sort(sorted);
+			double limit = sorted[MAX_CELLS - 1];
+			shown = new long[MAX_CELLS];
+			int n = 0;
+			for (int i = 0; i < dark.length && n < MAX_CELLS; i++) {
+				if (distance[i] <= limit) {
+					shown[n++] = dark[i];
 				}
 			}
 		}
-		cells = out;
-	}
-
-	/** Empty space a mob could stand in: no collision and no fluid. */
-	static boolean isFree(ClientLevel world, BlockState state, BlockPos pos) {
-		if (state.isAir()) {
-			return true;
+		List<Cell> out = new ArrayList<>(shown.length);
+		for (long cell : shown) {
+			int x = BlockPos.getX(cell);
+			int z = BlockPos.getZ(cell);
+			double top = BlockPos.getY(cell) + LIFT;
+			// Counter-clockwise as seen from above (draw() flips it when you look from below).
+			out.add(new Cell(new Vec3(x, top, z), new Vec3(x, top, z + 1), new Vec3(x + 1, top, z + 1), new Vec3(x + 1, top, z), top));
 		}
-		return state.getCollisionShape(world, pos).isEmpty() && state.getFluidState().isEmpty();
+		return out;
 	}
 
 	private void draw() {

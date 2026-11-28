@@ -22,6 +22,9 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.Screenshot;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
+import net.minecraft.world.level.LightLayer;
+import net.minecraft.world.level.block.state.BlockState;
 
 import khoa.tools.client.config.KhoaConfig;
 import khoa.tools.client.gui.KhoaToolsScreen;
@@ -39,8 +42,11 @@ final class LightPlanSelfTest {
 	private static final String ID = "lightlevel";
 	private static final int FLOOR = 199;
 	private static final int HALF = 24;
-	private static final int RADIUS = 16;
-	private static final int TIMEOUT = 600;
+	private static final int MIN_Y = 150;
+	private static final int MAX_Y = 230;
+	private static final int TIMEOUT = 900;
+	/** The lower bound needs a flood from every candidate: only worth it for small areas. */
+	private static final int BOUND_LIMIT = 6000;
 	private static final List<Step> STEPS = new ArrayList<>();
 	private static boolean started;
 	private static boolean acted;
@@ -155,7 +161,7 @@ final class LightPlanSelfTest {
 
 	/** A step that ends once the planner has finished at least one new round and has nothing left to do. */
 	private static void planned(String name, Runnable action, Supplier<String> check) {
-		add(name, action, () -> feature.planner().idle() && feature.planner().rounds() > roundsBefore, check);
+		add(name, action, () -> feature.idle() && feature.planner().rounds() > roundsBefore, check);
 	}
 
 	private static void cmd(Minecraft mc, String command) {
@@ -185,14 +191,43 @@ final class LightPlanSelfTest {
 		return feature.planner().state().spots();
 	}
 
-	/** The test's own count of red surfaces, from the same capture rules the overlay uses. */
-	private static Set<Long> red(Minecraft mc) {
+	private static LightScan.Snapshot snapshot(Minecraft mc) {
 		LightPlan.State state = feature.planner().state();
+		return LightScan.scan(LightScan.copy(mc.level, state.area()), state.settings());
+	}
+
+	private static Set<Long> red(Minecraft mc) {
 		Set<Long> out = new HashSet<>();
-		for (long cell : LightPlan.capture(mc.level, state.region(), state.settings()).dark()) {
+		for (long cell : snapshot(mc).dark()) {
 			out.add(cell);
 		}
 		return out;
+	}
+
+	/** The test's own count, straight from the world and its light engine, over the heights of the platform. */
+	private static String sameAsWorld(Minecraft mc) {
+		LightPlan.State state = feature.planner().state();
+		LightScan.Area area = state.area();
+		Set<Long> world = new HashSet<>();
+		int low = Math.max(area.minY(), FLOOR - 4);
+		int high = Math.min(area.maxY(), FLOOR + 10);
+		for (int x = area.minX(); x <= area.maxX(); x++) {
+			for (int z = area.minZ(); z <= area.maxZ(); z++) {
+				for (int y = low; y <= high; y++) {
+					BlockPos cell = new BlockPos(x, y, z);
+					BlockState above = mc.level.getBlockState(cell);
+					BlockState floor = mc.level.getBlockState(cell.below());
+					boolean free = above.isAir() || above.getCollisionShape(mc.level, cell).isEmpty() && above.getFluidState().isEmpty();
+					if (!floor.isAir() && free && floor.isFaceSturdy(mc.level, cell.below(), Direction.UP)
+						&& mc.level.getBrightness(LightLayer.BLOCK, cell) <= state.settings().threshold()) {
+						world.add(cell.asLong());
+					}
+				}
+			}
+		}
+		Set<Long> scanned = red(mc);
+		scanned.removeIf(cell -> BlockPos.getY(cell) < low || BlockPos.getY(cell) > high);
+		return expect(world.equals(scanned), "scan and world disagree: scan " + scanned.size() + ", world " + world.size());
 	}
 
 	/** Every red surface is in some planned spot's list (or cannot be lit), no spot is pointless; logs a lower bound. */
@@ -211,34 +246,37 @@ final class LightPlanSelfTest {
 				missing++;
 			}
 		}
+		java.util.Map<Long, Integer> lit = new java.util.HashMap<>();
+		for (LightPlan.Spot spot : state.spots()) {
+			for (long cell : spot.covers()) {
+				lit.merge(cell, 1, Integer::sum);
+			}
+		}
 		int redundant = 0;
 		for (LightPlan.Spot spot : state.spots()) {
-			Set<Long> others = new HashSet<>();
-			for (LightPlan.Spot other : state.spots()) {
-				if (other != spot) {
-					for (long cell : other.covers()) {
-						others.add(cell);
-					}
-				}
-			}
 			boolean needed = false;
 			for (long cell : spot.covers()) {
-				needed |= dark.contains(cell) && !others.contains(cell);
+				needed |= dark.contains(cell) && lit.get(cell) == 1;
 			}
 			if (!needed) {
 				redundant++;
 			}
 		}
-		write("  [" + label + "] red " + dark.size() + ", planned " + state.spots().size() + ", at least " + lowerBound(mc, dark)
-			+ " needed, cannot be lit " + state.uncoverable());
+		write("  [" + label + "] red " + dark.size() + ", planned " + state.spots().size()
+			+ (dark.size() <= BOUND_LIMIT ? ", lower bound " + lowerBound(mc, dark, label) : "") + ", cannot be lit " + state.uncoverable() + " ("
+			+ feature.timings() + ")");
+		String world = sameAsWorld(mc);
+		if (world != null) {
+			return world;
+		}
 		return expect(missing == state.uncoverable() && redundant == 0,
 			"red not covered by the plan: " + missing + " (cannot be lit " + state.uncoverable() + "), redundant spots " + redundant);
 	}
 
 	/** Dark cells no two of which one source could light together: each needs its own, so this many are needed at least. */
-	private static int lowerBound(Minecraft mc, Set<Long> dark) {
+	private static int lowerBound(Minecraft mc, Set<Long> dark, String label) {
 		LightPlan.State state = feature.planner().state();
-		LightPlan.Snapshot snapshot = LightPlan.capture(mc.level, state.region(), state.settings());
+		LightScan.Snapshot snapshot = snapshot(mc);
 		LightPlanner.Flood flood = new LightPlanner.Flood(snapshot);
 		java.util.Map<Integer, BitSet> by = new java.util.HashMap<>();
 		int[] candidates = snapshot.candidates();
@@ -249,6 +287,9 @@ final class LightPlanSelfTest {
 					by.computeIfAbsent(flood.reached[k], c -> new BitSet()).set(i);
 				}
 			}
+		}
+		if (label.startsWith("min ")) {
+			dump(label, state.spots().size(), by.values(), candidates.length);
 		}
 		List<BitSet> sets = new ArrayList<>(by.values());
 		sets.sort(Comparator.comparingInt(BitSet::cardinality));
@@ -263,6 +304,22 @@ final class LightPlanSelfTest {
 		return bound;
 	}
 
+	/** One line per target: the candidates that light it. Read by an exact solver outside the game. */
+	private static void dump(String label, int planned, java.util.Collection<BitSet> rows, int candidates) {
+		StringBuilder out = new StringBuilder(planned + " " + candidates + "\n");
+		for (BitSet row : rows) {
+			row.stream().forEach(c -> out.append(c).append(' '));
+			out.append('\n');
+		}
+		try {
+			Path folder = FabricLoader.getInstance().getGameDir().resolve("lighttest-instances");
+			Files.createDirectories(folder);
+			Files.writeString(folder.resolve(label.replace(' ', '_') + ".txt"), out, StandardCharsets.UTF_8);
+		} catch (IOException e) {
+			write("  could not write the instance: " + e);
+		}
+	}
+
 	/** Places a source on every planned spot at once, then no surface that could be lit may stay red. */
 	private static void placeAll(String label, String block) {
 		int[] expected = new int[2];
@@ -273,7 +330,7 @@ final class LightPlanSelfTest {
 			for (LightPlan.Spot spot : spots()) {
 				set(mc, spot.pos(), block);
 			}
-		}, () -> feature.planner().idle() && (expected[1] == 0 || feature.planner().rounds() > roundsBefore), () -> {
+		}, () -> feature.idle() && (expected[1] == 0 || feature.planner().rounds() > roundsBefore), () -> {
 			Set<Long> left = red(Minecraft.getInstance());
 			write("  after placing " + expected[1] + ": red " + left.size() + ", plan " + spots().size());
 			return expect(left.size() <= expected[0] && spots().isEmpty(), "still red " + left.size() + " (allowed " + expected[0] + "), plan "
@@ -314,10 +371,11 @@ final class LightPlanSelfTest {
 
 	private static void build(Minecraft mc) {
 		BlockPos feet = mc.player.blockPosition();
-		cx = feet.getX();
-		cz = feet.getZ();
-		int[] saved = { KhoaConfig.getInt(ID, "level", 0), KhoaConfig.getInt(ID, "range", RADIUS), KhoaConfig.getInt(ID, "plan_source", 0),
-			KhoaConfig.getInt(ID, "plan_height", 6) };
+		// The middle of the chunk: with distance 1 the area is the 48 x 48 blocks around it.
+		cx = (feet.getX() >> 4 << 4) + 8;
+		cz = (feet.getZ() >> 4 << 4) + 8;
+		int[] saved = { KhoaConfig.getInt(ID, "level", 0), KhoaConfig.getInt(ID, "distance", 2), KhoaConfig.getInt(ID, "plan_source", 0),
+			KhoaConfig.getInt(ID, "min_y", 60), KhoaConfig.getInt(ID, "max_y", 320) };
 		boolean savedPlan = LightLevelOverlayFeature.planning();
 		oldFov = mc.options.fov().get();
 
@@ -330,8 +388,9 @@ final class LightPlanSelfTest {
 			wipe(mc);
 			mc.options.fov().set(105);
 			settings(0, 0);
-			KhoaConfig.put(ID, "range", RADIUS);
-			KhoaConfig.put(ID, "plan_height", 16);
+			KhoaConfig.put(ID, "distance", 1);
+			KhoaConfig.put(ID, "min_y", MIN_Y);
+			KhoaConfig.put(ID, "max_y", MAX_Y);
 			KhoaConfig.put(ID, "plan", false);
 		}, () -> !mc.level.getBlockState(new BlockPos(cx, FLOOR, cz)).isAir(), () -> {
 			topView(mc, false);
@@ -343,12 +402,15 @@ final class LightPlanSelfTest {
 				feature.activate(mc);
 			}
 			cmd(mc, "khoatoolsclient lightlevel plan");
-		}, () -> feature.planner().idle(), () -> expect(LightLevelOverlayFeature.planning() && feature.isActive(), "command did nothing"));
+		}, () -> feature.idle(), () -> expect(LightLevelOverlayFeature.planning() && feature.isActive(), "command did nothing"));
 
 		// ---- A: an empty, completely dark area
-		planned("A: open dark area, level 0", () -> topView(mc, true), () -> {
+		planned("A: open dark area, level 0", () -> {
+			topView(mc, true);
+			feature.planner().restart();
+		}, () -> {
 			write("  " + spotList(spots()));
-			return checkPlan(mc, "open 0");
+			return checkPlan(mc, "min open level 0");
 		});
 		shot("lighttest-1-open");
 
@@ -357,7 +419,7 @@ final class LightPlanSelfTest {
 			add("B: place planned spot " + (i + 1) + ", the others stay", () -> {
 				remembered = new ArrayList<>(spots());
 				set(mc, remembered.get(0).pos(), "torch");
-			}, () -> feature.planner().idle() && feature.planner().rounds() > roundsBefore, () -> {
+			}, () -> feature.idle() && feature.planner().rounds() > roundsBefore, () -> {
 				Set<Long> wanted = cells(remembered.subList(1, remembered.size()));
 				Set<Long> now = cells(spots());
 				write("  before " + remembered.size() + ", now " + now.size());
@@ -380,8 +442,8 @@ final class LightPlanSelfTest {
 			wipe(mc);
 			settings(7, 0);
 			// Torches 10 steps from the patch centre leave dark exactly the cells within 3 steps of it.
-			for (int x = -20; x <= 20; x++) {
-				for (int z = -20; z <= 20; z++) {
+			for (int x = -24; x <= 24; x++) {
+				for (int z = -24; z <= 24; z++) {
 					int away = Math.abs(x - px) + Math.abs(z - pz);
 					boolean ring = away == 10;
 					boolean outer = away > 12 && Math.floorMod(x + 3 * z, 11) == 0;
@@ -415,8 +477,8 @@ final class LightPlanSelfTest {
 				settings(c[1], c[2]);
 				Random random = new Random(seed * 977L);
 				for (int w = 0; w < 4 + random.nextInt(6); w++) {
-					int x = random.nextInt(29) - 14;
-					int z = random.nextInt(29) - 14;
+					int x = random.nextInt(41) - 20;
+					int z = random.nextInt(41) - 20;
 					int length = 2 + random.nextInt(14);
 					int height = 1 + random.nextInt(3);
 					String block = obstacles[random.nextInt(obstacles.length - 1)];
@@ -424,12 +486,12 @@ final class LightPlanSelfTest {
 					cmd(mc, "fill " + (cx + x) + " " + (FLOOR + 1) + " " + (cz + z) + " " + (cx + x + (alongX ? length : 0)) + " " + (FLOOR + height) + " "
 						+ (cz + z + (alongX ? 0 : length)) + " " + block);
 				}
-				int torches = random.nextInt(14);
+				int torches = random.nextInt(22);
 				for (int t = 0; t < torches; t++) {
-					cmd(mc, "execute if block " + (cx + 0) + " " + FLOOR + " " + cz + " stone run setblock " + (cx + random.nextInt(33) - 16) + " "
-						+ (FLOOR + 1) + " " + (cz + random.nextInt(33) - 16) + " torch keep");
+					cmd(mc, "setblock " + (cx + random.nextInt(47) - 23) + " " + (FLOOR + 1) + " " + (cz + random.nextInt(47) - 23) + " torch keep");
 				}
 			}, () -> checkPlan(mc, label));
+			planned(label + ": Recalculate", () -> feature.planner().restart(), () -> checkPlan(mc, "min " + label));
 			if (seed == 4 || seed == 9) {
 				shot("lighttest-5-random-" + seed);
 			}
@@ -440,7 +502,7 @@ final class LightPlanSelfTest {
 		planned("E: open dark area, level 9 (many small sources)", () -> {
 			wipe(mc);
 			settings(9, 0);
-		}, () -> checkPlan(mc, "open 9"));
+		}, () -> checkPlan(mc, "min open level 9"));
 		shot("lighttest-6-before-wrong");
 		BlockPos[] wrong = new BlockPos[1];
 		planned("E: torch next to a planned spot instead of on it", () -> {
@@ -497,16 +559,16 @@ final class LightPlanSelfTest {
 			wipe(mc);
 			settings(9, 0);
 		}, () -> checkPlan(mc, "before walking"));
-		planned("F: move 7 blocks", () -> {
+		planned("F: move one chunk", () -> {
 			remembered = new ArrayList<>(spots());
-			cmd(mc, "tp @s " + (cx + 7.5) + " " + (FLOOR + 15.2) + " " + (cz + 0.5) + " 180 90");
+			cmd(mc, "tp @s " + (cx + 16.5) + " " + (FLOOR + 15.2) + " " + (cz + 0.5) + " 180 90");
 		}, () -> {
 			Set<Long> now = cells(spots());
 			int inner = 0;
 			int lost = 0;
 			for (LightPlan.Spot s : remembered) {
 				int x = s.pos().getX() - cx;
-				if (x > -7 && x < 11 && Math.abs(s.pos().getZ() - cz) < 12) {
+				if (x > -3 && x < 18 && Math.abs(s.pos().getZ() - cz) < 18) {
 					inner++;
 					lost += now.contains(s.cell()) ? 0 : 1;
 				}
@@ -516,18 +578,33 @@ final class LightPlanSelfTest {
 			return bad != null ? bad : expect(inner > 0 && lost == 0, "inner spots moved: " + lost);
 		});
 
-		// ---- G: biggest area, and an impossible level
-		long[] since = new long[1];
-		planned("G: display range 48", () -> {
-			since[0] = System.currentTimeMillis();
-			settings(0, 0);
-			KhoaConfig.put(ID, "range", 48);
-		}, () -> {
-			write("  planned in " + (System.currentTimeMillis() - since[0]) + " ms (includes waiting ticks)");
-			return checkPlan(mc, "range 48");
-		});
-		planned("G: level 14 with a torch cannot be reached", () -> {
-			KhoaConfig.put(ID, "range", RADIUS);
+		// ---- G: the height range
+		planned("G: Max Y below the platform hides it", () -> {
+			topView(mc, true);
+			KhoaConfig.put(ID, "max_y", FLOOR);
+		}, () -> expect(spots().isEmpty() && feature.shownCells() == 0, "spots " + spots().size() + ", red " + feature.shownCells()));
+		planned("G: Min Y = Max Y = the platform surface", () -> {
+			KhoaConfig.put(ID, "min_y", FLOOR + 1);
+			KhoaConfig.put(ID, "max_y", FLOOR + 1);
+		}, () -> expect(feature.shownCells() == 48 * 48 && !spots().isEmpty(), "red " + feature.shownCells()));
+
+		// ---- H: the default range over the natural terrain of the world
+		for (int distance : new int[] { 2, 5 }) {
+			long[] since = new long[1];
+			planned("H: Y 60..320, distance " + distance + " chunks", () -> {
+				since[0] = System.currentTimeMillis();
+				settings(0, 0);
+				KhoaConfig.put(ID, "min_y", 60);
+				KhoaConfig.put(ID, "max_y", 320);
+				KhoaConfig.put(ID, "distance", distance);
+			}, () -> {
+				write("  plan shown after " + (System.currentTimeMillis() - since[0]) + " ms, red drawn " + feature.shownCells());
+				return checkPlan(mc, "terrain " + distance);
+			});
+			shot("lighttest-7b-terrain-" + distance);
+		}
+		planned("H: level 14 with a torch cannot be reached", () -> {
+			KhoaConfig.put(ID, "distance", 1);
 			settings(14, 0);
 		}, () -> expect(spots().isEmpty() && feature.planner().state().uncoverable() > 0, "spots " + spots().size()));
 
@@ -537,7 +614,7 @@ final class LightPlanSelfTest {
 		}, null, () -> expect(mc.gui.screen() instanceof KhoaToolsScreen, "screen " + mc.gui.screen()));
 		shot("lighttest-8-config");
 		add("scroll to the new rows", () -> {
-			for (int i = 0; i < 6; i++) {
+			for (int i = 0; i < 2; i++) {
 				mc.gui.screen().mouseScrolled(mc.gui.screen().width / 2.0, mc.gui.screen().height - 30, 0, -3);
 			}
 		}, null, () -> null);
@@ -550,8 +627,9 @@ final class LightPlanSelfTest {
 			cmd(mc, "tp @s " + (feet.getX() + 0.5) + " " + feet.getY() + " " + (feet.getZ() + 0.5));
 			mc.options.fov().set(oldFov);
 			settings(saved[0], saved[2]);
-			KhoaConfig.put(ID, "range", saved[1]);
-			KhoaConfig.put(ID, "plan_height", saved[3]);
+			KhoaConfig.put(ID, "distance", saved[1]);
+			KhoaConfig.put(ID, "min_y", saved[3]);
+			KhoaConfig.put(ID, "max_y", saved[4]);
 			KhoaConfig.put(ID, "plan", savedPlan);
 			if (feature.isActive()) {
 				feature.activate(mc);

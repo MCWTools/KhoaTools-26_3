@@ -243,3 +243,11 @@
 - `feature/lightlevel/LightPlanner` (pure Java set cover: weighted greedy + local search + centring), `LightPlan` (world snapshot, incremental repair), `LightPlanController` (worker thread, drawing). Floor placement only; targets are exactly the surfaces the overlay marks red. Result is a good solution, not a proven minimum.
 - New mixin `ClientChunkCacheLightMixin` (`onLightUpdate`, BLOCK): overlay and plan follow the light engine; without it a plan could be made from stale light (seen in the self test).
 - Verified: `gradlew build --offline` OK; `gradlew runClient -Plighttest --offline` 48/48 (open area, place-as-planned stability, single dark patch, 9 random layouts, wrong torch / wall locality, walking, range 48, config screen). NOT verified: Modrinth profile / real server, frame time at range 48.
+
+## Light overlay: Min Y / Max Y, chunk distance, stronger optimiser (2026-11-28)
+
+- "Display range" and "Plan height" replaced by "Min Y / Max Y" (default 60 / 320, Y of the free block) and "Distance (chunks)" (1-8, default 2); both apply to the overlay and the plan.
+- New `LightScan`: chunk sections and block light are copied on the client thread, scanned on a worker. Nearest 30000 surfaces are drawn.
+- `LightPlanner`: row weighting local search added (full plan up to 5 s); big areas try an evenly spread part of the candidates.
+- Verified: `gradlew runClient -Plighttest --offline` 62/62. Dumped instances solved with scipy `milp`: planner count equals the proven minimum in every proven case (3, 7, 10, 15, 28, 9); in the unproven ones it was below the solver's best at its time limit (37/42, 202/214, 32/39, 66/70).
+- NOT verified: natural terrain / real base (dev world is flat), distance 8, Modrinth profile. Plans repaired after walking or a wrong torch keep old spots and can exceed the minimum.

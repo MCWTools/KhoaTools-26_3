@@ -1,5 +1,6 @@
 package khoa.tools.client.feature.lightlevel;
 
+import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -7,7 +8,6 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.gizmos.GizmoStyle;
 import net.minecraft.gizmos.Gizmos;
@@ -21,13 +21,10 @@ import khoa.tools.KhoaTools;
 
 /** Decides when to plan again, runs the planner off the client thread and draws the planned spots. */
 final class LightPlanController {
-	/** Wait until nothing changed for this many ticks (lets the light engine finish)... */
-	private static final int QUIET_TICKS = 5;
+	/** Wait until the surfaces stayed the same for this many ticks (lets the light engine finish)... */
+	private static final int QUIET_TICKS = 8;
 	/** ...but never longer than this when the world keeps changing. */
-	private static final int MAX_WAIT_TICKS = 30;
-	/** The planned area follows the player in steps, so small movements do not reshuffle anything. */
-	private static final int MOVE_X = 6;
-	private static final int MOVE_Y = 3;
+	private static final int MAX_WAIT_TICKS = 40;
 
 	private static final int NEXT = ARGB.color(255, 255, 235, 40);
 	private static final int OTHER = ARGB.color(255, 40, 235, 255);
@@ -39,56 +36,50 @@ final class LightPlanController {
 		return thread;
 	});
 
-	private ClientLevel level;
 	private LightPlan.State state;
-	private LightPlan.Region region;
-	private LightPlan.Settings settings;
+	private LightScan.Snapshot latest;
 	private Future<LightPlan.State> job;
-	private boolean pending;
+	/** {@link #latest} differs from what was planned last. */
+	private boolean fresh;
 	private int quiet;
 	private int waited;
 	private int rounds;
+	private volatile long planMillis;
 	private String lastMessage = "";
 
-	/** Forget everything; the next tick plans from nothing. */
-	void reset() {
+	/** Throw the plan away and make a new one from nothing. */
+	void restart() {
 		if (job != null) {
 			job.cancel(true);
 			job = null;
 		}
 		state = null;
-		region = null;
-		settings = null;
-		pending = false;
+		fresh = latest != null;
+		quiet = QUIET_TICKS;
 		lastMessage = "";
 	}
 
-	void worldChanged() {
-		pending = true;
-		quiet = 0;
+	/** Forget everything, also the scanned world. */
+	void clear() {
+		latest = null;
+		restart();
 	}
 
-	void tick(Minecraft mc, LightPlan.Settings wanted, int radius, int height) {
-		if (mc.level != level) {
-			reset();
-			level = mc.level;
+	/** A new scan of the world. */
+	void offer(LightScan.Snapshot snapshot) {
+		boolean other = latest != null && !latest.settings().equals(snapshot.settings());
+		if (other) {
+			restart();
 		}
-		if (mc.level == null || mc.player == null) {
-			return;
+		if (latest == null || other || !latest.area().equals(snapshot.area()) || latest.originY() != snapshot.originY()
+			|| !Arrays.equals(latest.dark(), snapshot.dark()) || !Arrays.equals(latest.candidates(), snapshot.candidates())) {
+			fresh = true;
+			quiet = 0;
 		}
-		if (settings != null && !settings.equals(wanted)) {
-			reset();
-		}
-		settings = wanted;
+		latest = snapshot;
+	}
 
-		BlockPos here = mc.player.blockPosition();
-		if (region == null || region.radius() != radius || region.height() != height || Math.abs(here.getX() - region.x()) >= MOVE_X
-			|| Math.abs(here.getZ() - region.z()) >= MOVE_X || Math.abs(here.getY() - 1 - region.y()) >= MOVE_Y) {
-			region = new LightPlan.Region(here.getX(), here.getY() - 1, here.getZ(), radius, height);
-			pending = true;
-			quiet = QUIET_TICKS;
-		}
-
+	void tick(Minecraft mc) {
 		if (job != null && job.isDone()) {
 			try {
 				state = job.get();
@@ -98,25 +89,38 @@ final class LightPlanController {
 				Thread.currentThread().interrupt();
 			} catch (ExecutionException e) {
 				KhoaTools.LOGGER.error("Light placement planning failed", e.getCause());
-				KhoaTools.LOGGER.error("Light placement settings: {} {}", settings, region);
 				mc.gui.hud.setOverlayMessage(Component.literal("Light plan failed, see the log"), false);
 			}
 			job = null;
 		}
 
-		if (!pending) {
+		if (!fresh) {
+			waited = 0;
 			return;
 		}
 		quiet++;
 		waited++;
 		if (job == null && (quiet >= QUIET_TICKS || waited >= MAX_WAIT_TICKS)) {
-			LightPlan.Snapshot snapshot = LightPlan.capture(mc.level, region, settings);
+			LightScan.Snapshot snapshot = latest;
 			LightPlan.State previous = state;
 			long seed = rounds * 31L + 7;
-			job = worker.submit(() -> LightPlan.update(snapshot, previous, seed));
-			pending = false;
+			job = worker.submit(() -> {
+				long start = System.nanoTime();
+				LightPlan.State result = LightPlan.update(snapshot, previous, seed);
+				planMillis = (System.nanoTime() - start) / 1_000_000;
+				return result;
+			});
+			if (previous == null) {
+				mc.gui.hud.setOverlayMessage(Component.literal("Light plan: calculating..."), false);
+			}
+			fresh = false;
 			waited = 0;
 		}
+	}
+
+	/** Time the last finished round took. */
+	long planMillis() {
+		return planMillis;
 	}
 
 	private void announce(Minecraft mc) {
@@ -137,7 +141,7 @@ final class LightPlanController {
 
 	/** True when the last change has been planned. */
 	boolean idle() {
-		return state != null && !pending && job == null;
+		return state != null && !fresh && job == null;
 	}
 
 	/** Number of finished planning rounds (never reset). */

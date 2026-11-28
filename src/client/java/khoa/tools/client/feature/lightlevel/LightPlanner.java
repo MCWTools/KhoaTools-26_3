@@ -5,14 +5,16 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.PriorityQueue;
 import java.util.Random;
+import java.util.stream.IntStream;
 
 /**
  * Pure search core of "Optimal placement" (no Minecraft types): picks as few light source positions as it can so that
  * every target cell gets a block light of at least {@code threshold + 1}.
  * <p>
- * This is a set cover problem (NP hard), so the result is a good solution, not a proven minimum:
- * weighted greedy with a few weightings, then local search (throw some sources away, refill, keep it when not worse),
- * then every chosen source is moved to the middle of the cells only it lights.
+ * This is a set cover problem (NP hard), so a minimum cannot be promised. Weighted greedy with a few weightings gives
+ * a start; then a row weighting local search keeps removing one source and swapping the others until everything is lit
+ * again (cells that stay dark grow heavier, which pushes the search out of dead ends). It stops early when it reaches a
+ * proven lower bound. At the end every chosen source is moved to the middle of the cells only it lights.
  * Block light is the maximum over all sources, so the coverage of one source does not depend on the others.
  */
 final class LightPlanner {
@@ -134,8 +136,11 @@ final class LightPlanner {
 	record Result(int[] sources, int uncoverable) {
 	}
 
-	/** Above this many candidates only every second one (checkerboard) is tried, to keep big areas fast. */
-	private static final int THIN_ABOVE = 7000;
+	/** Roughly how many (candidate, lit cell) pairs are kept; bigger areas try only an evenly spread part of the candidates. */
+	private static final long MAX_PAIRS = 6_000_000L;
+	private static final int MIN_CANDIDATES = 6000;
+	/** The local search gives up after this long without finding anything better. */
+	private static final long STALL_MILLIS = 1500;
 
 	private final int[][] cover;
 	private final byte[][] margin;
@@ -191,19 +196,34 @@ final class LightPlanner {
 			targetOf[targets[i]] = i;
 		}
 		int[] usable = near(grid, candidates, targets, emission);
-		// Big area: the first half of the list is one colour of the checkerboard, the rest is only a fallback.
+		Flood flood = new Flood(grid);
+		// How many targets does a candidate light on average? Decides how many candidates fit in memory.
+		long pairs = 0;
+		int samples = Math.min(48, usable.length);
+		for (int i = 0; i < samples; i++) {
+			flood.run(usable[(int) ((long) i * usable.length / samples)], emission, threshold + 1);
+			for (int k = 0; k < flood.reachedCount; k++) {
+				if (targetOf[flood.reached[k]] >= 0) {
+					pairs++;
+				}
+			}
+		}
+		long limit = Math.max(MIN_CANDIDATES, MAX_PAIRS * Math.max(1, samples) / Math.max(1, pairs));
+		int step = (int) Math.max(1, (usable.length + limit - 1) / limit);
 		int firstChoice = usable.length;
-		if (usable.length > THIN_ABOVE) {
+		if (step > 1) {
+			// An even lattice over x / z; the other candidates are only a fallback for cells the lattice cannot light.
 			int sx = grid.sizeX();
 			int sz = grid.sizeZ();
-			int[] even = Arrays.stream(usable).filter(c -> ((c % sx + c / sx % sz) & 1) == 0).toArray();
-			int[] odd = Arrays.stream(usable).filter(c -> ((c % sx + c / sx % sz) & 1) != 0).toArray();
-			firstChoice = even.length;
-			usable = Arrays.copyOf(even, even.length + odd.length);
-			System.arraycopy(odd, 0, usable, even.length, odd.length);
+			int skew = Math.max(1, (int) Math.round(Math.sqrt(step)));
+			int by = step;
+			int[] first = Arrays.stream(usable).filter(c -> (c % sx + (c / sx % sz) * skew) % by == 0).toArray();
+			int[] rest = Arrays.stream(usable).filter(c -> (c % sx + (c / sx % sz) * skew) % by != 0).toArray();
+			firstChoice = first.length;
+			usable = Arrays.copyOf(first, first.length + rest.length);
+			System.arraycopy(rest, 0, usable, first.length, rest.length);
 		}
 
-		Flood flood = new Flood(grid);
 		List<Integer> kept = new ArrayList<>();
 		List<int[]> covers = new ArrayList<>();
 		List<byte[]> margins = new ArrayList<>();
@@ -217,6 +237,18 @@ final class LightPlanner {
 			}
 			if (position == firstChoice) {
 				primary = reachable.clone();
+				// Only candidates near a still unlit target are worth flooding.
+				boolean[] done = primary;
+				int[] unlit = IntStream.range(0, targets.length).filter(t -> !done[t]).map(t -> targets[t]).toArray();
+				if (unlit.length == 0) {
+					break;
+				}
+				int[] rest = near(grid, Arrays.copyOfRange(usable, position, usable.length), unlit, emission);
+				System.arraycopy(rest, 0, usable, position, rest.length);
+				usable = Arrays.copyOf(usable, position + rest.length);
+				if (rest.length == 0) {
+					break;
+				}
 			}
 			int c = usable[position];
 			flood.run(c, emission, threshold + 1);
@@ -301,26 +333,206 @@ final class LightPlanner {
 			}
 		}
 		load(best);
-
-		double[] weight = weights(1.0);
-		int stale = 0;
-		while (chosen.size() > 1 && stale < 4000 && System.nanoTime() < end && !Thread.currentThread().isInterrupted()) {
-			List<Integer> before = new ArrayList<>(chosen);
-			ruin(2 + random.nextInt(3));
-			greedy(weight, 0.4);
-			prune();
-			if (chosen.size() > before.size()) {
-				load(before);
-				stale++;
-			} else if (chosen.size() < before.size()) {
-				stale = 0;
-			} else {
-				stale++;
-			}
-		}
+		best = improve(best, lowerBound(), end);
+		load(best);
 		center();
 		prune();
 		return chosen.stream().mapToInt(c -> candidates[c]).toArray();
+	}
+
+	/** Targets no two of which share a candidate each need their own source: so many are needed at least. */
+	private int lowerBound() {
+		Integer[] order = new Integer[targetCount];
+		for (int t = 0; t < targetCount; t++) {
+			order[t] = t;
+		}
+		Arrays.sort(order, (a, b) -> Integer.compare(coveredBy[a].length, coveredBy[b].length));
+		boolean[] taken = new boolean[candidates.length];
+		int bound = 0;
+		next:
+		for (int t : order) {
+			if (coveredBy[t].length == 0) {
+				continue;
+			}
+			for (int c : coveredBy[t]) {
+				if (taken[c]) {
+					continue next;
+				}
+			}
+			for (int c : coveredBy[t]) {
+				taken[c] = true;
+			}
+			bound++;
+		}
+		return bound;
+	}
+
+	/** Row weighting local search state, only alive inside {@link #improve}. */
+	private final class Weighted {
+		/** Weight of a target: grows every step it stays dark. */
+		final int[] weight = new int[targetCount];
+		/** Chosen candidate: minus the weight only it holds up. Other candidate: the dark weight it would light. */
+		final long[] score = new long[candidates.length];
+		/** XOR of the chosen candidates lighting a target, so with exactly one it names it. */
+		final int[] owner = new int[targetCount];
+		final long[] age = new long[candidates.length];
+		final int[] dark = new int[targetCount];
+		final int[] darkAt = new int[targetCount];
+		int darkCount;
+
+		Weighted() {
+			Arrays.fill(weight, 1);
+			Arrays.fill(lit, 0);
+			Arrays.fill(used, false);
+			for (int c = 0; c < candidates.length; c++) {
+				score[c] = cover[c].length;
+			}
+			for (int t = 0; t < targetCount; t++) {
+				if (coveredBy[t].length > 0) {
+					darkAt[t] = darkCount;
+					dark[darkCount++] = t;
+				}
+			}
+			List<Integer> start = new ArrayList<>(chosen);
+			chosen.clear();
+			for (int c : start) {
+				put(c);
+			}
+		}
+
+		void put(int c) {
+			chosen.add(c);
+			used[c] = true;
+			long own = 0;
+			for (int t : cover[c]) {
+				if (lit[t] == 0) {
+					for (int d : coveredBy[t]) {
+						if (!used[d]) {
+							score[d] -= weight[t];
+						}
+					}
+					int last = dark[--darkCount];
+					dark[darkAt[t]] = last;
+					darkAt[last] = darkAt[t];
+					own += weight[t];
+				} else if (lit[t] == 1) {
+					score[owner[t]] += weight[t];
+				}
+				lit[t]++;
+				owner[t] ^= c;
+			}
+			score[c] = -own;
+		}
+
+		void take(int position) {
+			int c = chosen.get(position);
+			int last = chosen.remove(chosen.size() - 1);
+			if (position < chosen.size()) {
+				chosen.set(position, last);
+			}
+			used[c] = false;
+			long gain = 0;
+			for (int t : cover[c]) {
+				lit[t]--;
+				owner[t] ^= c;
+				if (lit[t] == 0) {
+					for (int d : coveredBy[t]) {
+						if (!used[d] && d != c) {
+							score[d] += weight[t];
+						}
+					}
+					darkAt[t] = darkCount;
+					dark[darkCount++] = t;
+					gain += weight[t];
+				} else if (lit[t] == 1) {
+					score[owner[t]] -= weight[t];
+				}
+			}
+			score[c] = gain;
+		}
+
+		/** Position in {@code chosen} of the source whose loss hurts least (a sample of them when there are many). */
+		int cheapest(int avoid) {
+			int size = chosen.size();
+			int tries = Math.min(size, 120);
+			int best = -1;
+			for (int i = 0; i < tries; i++) {
+				int p = size <= 120 ? i : random.nextInt(size);
+				int c = chosen.get(p);
+				if (c == avoid) {
+					continue;
+				}
+				if (best < 0 || score[c] > score[chosen.get(best)] || score[c] == score[chosen.get(best)] && age[c] < age[chosen.get(best)]) {
+					best = p;
+				}
+			}
+			return best;
+		}
+
+		void age() {
+			for (int i = 0; i < darkCount; i++) {
+				int t = dark[i];
+				weight[t]++;
+				for (int d : coveredBy[t]) {
+					if (!used[d]) {
+						score[d]++;
+					}
+				}
+			}
+		}
+	}
+
+	/** Keeps asking for one source less than the best full cover found so far. */
+	private List<Integer> improve(List<Integer> start, int bound, long end) {
+		List<Integer> best = start;
+		if (best.size() <= bound) {
+			return best;
+		}
+		Weighted w = new Weighted();
+		long found = System.nanoTime();
+		int removed = -1;
+		for (long step = 1;; step++) {
+			if (w.darkCount == 0) {
+				if (chosen.size() < best.size()) {
+					best = new ArrayList<>(chosen);
+					found = System.nanoTime();
+				}
+				if (chosen.size() <= bound || chosen.isEmpty()) {
+					break;
+				}
+				w.take(w.cheapest(-1));
+				continue;
+			}
+			if ((step & 31) == 0) {
+				long now = System.nanoTime();
+				if (now > end || now - found > STALL_MILLIS * 1_000_000L || Thread.currentThread().isInterrupted()) {
+					break;
+				}
+			}
+			// Swap: drop the cheapest source, then light one random dark target with the best candidate for it.
+			int added = -1;
+			if (!chosen.isEmpty()) {
+				int position = w.cheapest(-1);
+				removed = chosen.get(position);
+				w.take(position);
+				w.age[removed] = step;
+			}
+			int t = w.dark[random.nextInt(w.darkCount)];
+			for (int c : coveredBy[t]) {
+				if (used[c] || c == removed && coveredBy[t].length > 1) {
+					continue;
+				}
+				if (added < 0 || w.score[c] > w.score[added] || w.score[c] == w.score[added] && w.age[c] < w.age[added]) {
+					added = c;
+				}
+			}
+			if (added >= 0) {
+				w.put(added);
+				w.age[added] = step;
+			}
+			w.age();
+		}
+		return best;
 	}
 
 	private double[] weights(double alpha) {
@@ -417,36 +629,6 @@ final class LightPlanner {
 				}
 			}
 			remove(chosen.indexOf(c));
-		}
-	}
-
-	/** Throws away one random source and the ones that share the most cells with it. */
-	private void ruin(int size) {
-		int first = chosen.get(random.nextInt(chosen.size()));
-		boolean[] mine = new boolean[targetCount];
-		for (int t : cover[first]) {
-			mine[t] = true;
-		}
-		List<int[]> shared = new ArrayList<>();
-		for (int c : chosen) {
-			if (c == first) {
-				continue;
-			}
-			// Overlap, or at least closeness through a common candidate area: count targets lit by both.
-			int n = 0;
-			for (int t : cover[c]) {
-				if (mine[t]) {
-					n++;
-				}
-			}
-			if (n > 0) {
-				shared.add(new int[] { c, n * 4 + random.nextInt(4 + cover[c].length / 4) });
-			}
-		}
-		shared.sort((a, b) -> Integer.compare(b[1], a[1]));
-		remove(chosen.indexOf(first));
-		for (int i = 0; i < Math.min(size - 1, shared.size()); i++) {
-			remove(chosen.indexOf(shared.get(i)[0]));
 		}
 	}
 
