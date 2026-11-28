@@ -3,11 +3,16 @@ package khoa.tools.client.feature.lightlevel;
 import java.util.ArrayList;
 import java.util.List;
 
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+
+import net.fabricmc.fabric.api.client.command.v2.ClientCommands;
+import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
 import net.fabricmc.fabric.api.client.rendering.v1.level.LevelRenderEvents;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.commands.CommandBuildContext;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.gizmos.GizmoStyle;
@@ -45,11 +50,18 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 
 	private static final GizmoStyle STYLE = GizmoStyle.fill(ARGB.color(110, 255, 40, 40));
 
+	/** Light sources "Optimal placement" can plan for. */
+	private static final List<String> SOURCES = List.of("Torch (14)", "Lantern (15)", "Soul torch / lantern (10)", "Redstone torch (7)",
+		"Full block: glowstone etc. (15)");
+	private static final int[] EMISSION = { 14, 15, 10, 7, 15 };
+	private static final int FULL_BLOCK = 4;
+
 	private static volatile boolean dirty;
 
 	private record Cell(Vec3 p0, Vec3 p1, Vec3 p2, Vec3 p3, double y) {
 	}
 
+	private final LightPlanController planner = new LightPlanController();
 	private boolean on;
 	private List<Cell> cells = List.of();
 	private boolean needsRebuild;
@@ -77,7 +89,7 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 
 	@Override
 	public String description() {
-		return "Paints red every surface whose block light level is at or below the slider (sky light is ignored). Updates on every block / light update and when you move.";
+		return "Paints red every surface whose block light level is at or below the slider (sky light is ignored). Updates on every block / light update and when you move. Optimal placement marks (cyan, nearest one yellow) where to put as few light sources as possible so that nothing stays red; the number is how many red surfaces that source fixes.";
 	}
 
 	@Override
@@ -91,7 +103,49 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 			Setting.slider("level", "Red light level", "Surfaces with block light level at or below this get the red overlay (0 - 15).", 0, 15,
 				LightLevelOverlayFeature::threshold, v -> KhoaConfig.put(ID, "level", v)),
 			Setting.slider("range", "Display range", "How many blocks around you are scanned (horizontal radius, min 16). Vertical range is limited to 16. Bigger = more lag.", MIN_RANGE, MAX_RANGE,
-				LightLevelOverlayFeature::range, v -> KhoaConfig.put(ID, "range", v)));
+				LightLevelOverlayFeature::range, v -> KhoaConfig.put(ID, "range", v)),
+			Setting.bool("plan", "Optimal placement", "Mark where to place light sources so that every surface gets brighter than the red light level, using as few as possible.",
+				LightLevelOverlayFeature::planning, v -> KhoaConfig.put(ID, "plan", v)),
+			Setting.dropdown("plan_source", "Light source", "The light source Optimal placement plans for.", SOURCES,
+				LightLevelOverlayFeature::source, v -> KhoaConfig.put(ID, "plan_source", v)),
+			Setting.slider("plan_height", "Plan height", "Optimal placement only handles surfaces within this many blocks above and below you (keeps caves under your base out of the plan).", 1, MAX_VERTICAL,
+				LightLevelOverlayFeature::planHeight, v -> KhoaConfig.put(ID, "plan_height", v)),
+			Setting.action("plan_again", "Recalculate", "Throw the current plan away and make a new one for the whole area.", "Recalculate", planner::reset));
+	}
+
+	static boolean planning() {
+		return KhoaConfig.getBool(ID, "plan", false);
+	}
+
+	private static int source() {
+		return Math.max(0, Math.min(SOURCES.size() - 1, KhoaConfig.getInt(ID, "plan_source", 0)));
+	}
+
+	private static int planHeight() {
+		return Math.max(1, Math.min(MAX_VERTICAL, KhoaConfig.getInt(ID, "plan_height", 6)));
+	}
+
+	LightPlanController planner() {
+		return planner;
+	}
+
+	@Override
+	public void registerCommands(LiteralArgumentBuilder<FabricClientCommandSource> root, CommandBuildContext context) {
+		root.then(ClientCommands.literal(ID)
+			.executes(ctx -> {
+				activate(ctx.getSource().getClient());
+				return 1;
+			})
+			.then(ClientCommands.literal("plan").executes(ctx -> {
+				boolean next = !planning();
+				KhoaConfig.put(ID, "plan", next);
+				Minecraft mc = ctx.getSource().getClient();
+				if (next && !on) {
+					activate(mc);
+				}
+				KhoaFeature.say(mc, "Optimal placement: " + (next ? "on" : "off"));
+				return 1;
+			})));
 	}
 
 	private static int threshold() {
@@ -111,12 +165,16 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 		sinceRebuild = MIN_INTERVAL;
 		builtLevel = -1;
 		builtRange = -1;
+		planner.reset();
 		KhoaFeature.say(mc, "Light Level Overlay: " + (on ? "on (block light <= " + threshold() + ")" : "off"));
 	}
 
 	@Override
 	public void onInit() {
-		ClientTickEvents.END_CLIENT_TICK.register(this::tick);
+		ClientTickEvents.END_CLIENT_TICK.register(mc -> {
+			tick(mc);
+			LightPlanSelfTest.tick(mc, this);
+		});
 		LevelRenderEvents.END_EXTRACTION.register(context -> draw());
 	}
 
@@ -128,6 +186,7 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 		if (mc.level == null || mc.player == null) {
 			cells = List.of();
 			level = null;
+			planner.reset();
 			return;
 		}
 		if (level != mc.level) {
@@ -138,6 +197,7 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 
 		if (dirty) {
 			dirty = false;
+			planner.worldChanged();
 			settle = SETTLE_TICKS;
 			needsRebuild = true;
 		} else if (settle > 0) {
@@ -158,6 +218,13 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 			rebuild(mc, here);
 			needsRebuild = false;
 			sinceRebuild = 0;
+		}
+
+		if (planning()) {
+			int source = source();
+			planner.tick(mc, new LightPlan.Settings(EMISSION[source], source == FULL_BLOCK, threshold()), range(), planHeight());
+		} else {
+			planner.reset();
 		}
 	}
 
@@ -213,7 +280,7 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 	}
 
 	/** Empty space a mob could stand in: no collision and no fluid. */
-	private static boolean isFree(ClientLevel world, BlockState state, BlockPos pos) {
+	static boolean isFree(ClientLevel world, BlockState state, BlockPos pos) {
 		if (state.isAir()) {
 			return true;
 		}
@@ -221,12 +288,12 @@ public final class LightLevelOverlayFeature implements KhoaFeature {
 	}
 
 	private void draw() {
-		if (!on || cells.isEmpty()) {
+		Minecraft mc = Minecraft.getInstance();
+		if (!on || mc.player == null) {
 			return;
 		}
-		Minecraft mc = Minecraft.getInstance();
-		if (mc.player == null) {
-			return;
+		if (planning()) {
+			planner.draw(mc);
 		}
 		double eyeY = mc.player.getEyePosition().y;
 		for (Cell c : cells) {

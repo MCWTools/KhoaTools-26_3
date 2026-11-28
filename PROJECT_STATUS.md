@@ -236,3 +236,10 @@
 - Shift + double click a card opens `AdvancedPickScreen` ("Advanced Setting"): Y level range (default = world bottom to height limit) and, for Block Finder / Spawner Finder, an RGB overlay colour override. Block Log uses the Y range only. Stored as `<list key>_advanced` next to the list in khoatools.json (`PickAdvanced`, `PickFilter`); removing a pick drops its options. Mob Finder (entities) has none.
 - Block Finder: "Outline transparency" (default 0) and "Fill transparency" (default 72) sliders.
 - Verified: `gradlew build` OK; in-game `gradlew runClient -Ppickertest` 23/23 + screenshots. NOT tested in game: Spawner Finder range / colour, Block Log range, Ore Items buttons in an item picker.
+
+## Light Level Overlay: Optimal placement (2026-11-28)
+
+- New rows in the Light Level Overlay config: Optimal placement (bool), Light source (torch / lantern / soul / redstone torch / full block), Plan height, Recalculate. Command: `/khoatoolsclient lightlevel plan`.
+- `feature/lightlevel/LightPlanner` (pure Java set cover: weighted greedy + local search + centring), `LightPlan` (world snapshot, incremental repair), `LightPlanController` (worker thread, drawing). Floor placement only; targets are exactly the surfaces the overlay marks red. Result is a good solution, not a proven minimum.
+- New mixin `ClientChunkCacheLightMixin` (`onLightUpdate`, BLOCK): overlay and plan follow the light engine; without it a plan could be made from stale light (seen in the self test).
+- Verified: `gradlew build --offline` OK; `gradlew runClient -Plighttest --offline` 48/48 (open area, place-as-planned stability, single dark patch, 9 random layouts, wrong torch / wall locality, walking, range 48, config screen). NOT verified: Modrinth profile / real server, frame time at range 48.

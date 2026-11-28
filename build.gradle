@@ -47,6 +47,15 @@ loom {
 			}
 		}
 	}
+	// ./gradlew runClient -Plighttest : same, runs the Light Level Overlay "Optimal placement" self test (LightPlanSelfTest)
+	if (project.hasProperty('lighttest')) {
+		runs {
+			client {
+				vmArg "-Dkhoatools.lighttest=true"
+				programArgs "--quickPlaySingleplayer", "New World"
+			}
+		}
+	}
 	if (project.hasProperty('autotest')) {
 		runs {
 			client {
